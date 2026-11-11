@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1793162972629,
+      "tag": "0000_tearful_loki",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793164000000,
+      "tag": "0001_contact_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793165000000,
+      "tag": "0002_newsletter_and_social_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793166000000,
+      "tag": "0003_api_rate_limits_and_newsletter_token",
+      "breakpoints": true
+    }
+  ]
+}

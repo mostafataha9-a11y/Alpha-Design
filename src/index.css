@@ -1,0 +1,88 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&family=Tajawal:wght@400;500;700;800;900&family=Almarai:wght@400;700;800&family=Noto+Sans+Arabic:wght@400;500;600;700;800&display=swap');
+
+@theme {
+  --font-sans: 'Cairo', 'Tajawal', 'Almarai', 'Noto Sans Arabic', 'Segoe UI Arabic', 'SF Pro Arabic', 'Geeza Pro', 'Tahoma', 'Arial', sans-serif;
+  --font-serif: 'Cairo', 'Tajawal', 'Almarai', 'Noto Sans Arabic', 'Segoe UI Arabic', 'SF Pro Arabic', 'Geeza Pro', 'Tahoma', 'Arial', sans-serif;
+}
+
+:root {
+  --font-arabic-modern: 'Cairo', 'Tajawal', 'Almarai', 'Noto Sans Arabic', 'Segoe UI Arabic', 'SF Pro Arabic', 'Geeza Pro', 'Tahoma', 'Arial', sans-serif;
+  --font-cairo: var(--font-arabic-modern);
+}
+
+html {
+  font-family: var(--font-arabic-modern) !important;
+  direction: rtl;
+  text-align: right;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-arabic-modern) !important;
+  direction: rtl;
+  text-align: right;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Enforce pure Modern Standard Arabic across all Tailwind font utility classes */
+.font-sans, .font-serif {
+  font-family: var(--font-arabic-modern) !important;
+}
+
+/* Ensure inputs, buttons, and textareas inherit Arabic font */
+input, textarea, select, button {
+  font-family: inherit;
+  direction: rtl;
+}
+
+/* 3D Animated Metallic Coin Keyframes & Utility Styles */
+@keyframes coin-spin {
+  0% {
+    transform: rotateY(0deg);
+  }
+  100% {
+    transform: rotateY(360deg);
+  }
+}
+
+@keyframes coin-shine {
+  0% {
+    transform: translateX(-150%) rotate(25deg);
+  }
+  100% {
+    transform: translateX(250%) rotate(25deg);
+  }
+}
+
+.animate-coin-spin {
+  animation: coin-spin 6s infinite linear;
+}
+
+.animate-coin-spin:hover {
+  animation-duration: 2s;
+}
+
+.transform-style-3d {
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.perspective-1000 {
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
+}
+
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
