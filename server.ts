@@ -50,7 +50,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     "connect-src 'self' https://generativelanguage.googleapis.com https://api.groq.com https://*.google.com https://*.googleapis.com https://*.gstatic.com https://pagead2.googlesyndication.com https://*.firebaseapp.com https://*.firebaseio.com; " +
     "frame-src 'self' https://www.google.com https://maps.google.com https://www.youtube.com https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://*.firebaseapp.com https://accounts.google.com https://apis.google.com https://*.google.com; " +
     "frame-ancestors 'self' https://*.run.app https://aistudio.google.com https://*.google.com; " +
-    "form-action 'self'; " +
+    "form-action 'self' https://accounts.google.com; " +
     "object-src 'none'; " +
     "base-uri 'self';"
   );
@@ -226,6 +226,26 @@ app.use(dbRouter);
 app.use(socialRouter);
 app.use(articleAiRouter);
 app.use(aiChatAssistRouter);
+
+// Firebase Hosting config helper endpoint (prevents SPA HTML fallback returning 200 HTML for init.json)
+app.get('/__/firebase/init.json', (_req: Request, res: Response) => {
+  try {
+    const cfgPath = path.resolve(__dirname, 'firebase-applet-config.json');
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.json({
+      apiKey: cfg.apiKey,
+      authDomain: cfg.authDomain,
+      projectId: cfg.projectId,
+      storageBucket: cfg.storageBucket,
+      messagingSenderId: cfg.messagingSenderId,
+      appId: cfg.appId,
+      measurementId: cfg.measurementId || undefined,
+    });
+  } catch {
+    res.status(404).json({ error: 'Firebase config not found' });
+  }
+});
 
 // Same-Origin Reverse Proxy for Firebase Auth Helper (/__/auth/*)
 // Supports standalone top-level browser sessions even under strict 3rd-party cookie rules

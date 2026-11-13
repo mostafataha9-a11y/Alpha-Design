@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Lock,
   ShieldCheck,
@@ -55,6 +55,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [authorizedGoogleAccount, setAuthorizedGoogleAccount] = useState<GoogleAuthUser | null>(null);
   const [isGooglePopupActive, setIsGooglePopupActive] = useState(false);
+  const googlePopupLockRef = useRef(false);
 
   // 14-Character 2FA Emergency Key States
   const [showEmergencyKeySection, setShowEmergencyKeySection] = useState(false);
@@ -64,11 +65,14 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const [emergencyKeyInput, setEmergencyKeyInput] = useState('');
   const [copiedKey, setCopiedKey] = useState(false);
 
-  // Pre-warm Firebase Auth iframe & gapi when modal opens so popup never loses user gesture
+  // Pre-warm Firebase Auth iframe & authorizedDomains when modal opens so popup never loses user gesture
   useEffect(() => {
     if (isOpen) {
       warmUpGoogleAuth();
     } else {
+      googlePopupLockRef.current = false;
+      setIsGooglePopupActive(false);
+      setIsVerifying(false);
       setAuthorizedGoogleAccount(null);
       setErrorMsg('');
       setSuccessMsg('');
@@ -178,8 +182,12 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     }
   };
 
-  // Trigger Real Google OAuth via Google Identity Services & Firebase Auth
+  // Trigger Real Google OAuth via Firebase Auth & Google OAuth 2.0
   const handleTriggerRealGoogleOAuth = async () => {
+    if (googlePopupLockRef.current || isGooglePopupActive || isVerifying) {
+      return;
+    }
+    googlePopupLockRef.current = true;
     setErrorMsg('');
     setSuccessMsg('');
     setIsGooglePopupActive(true);
@@ -196,7 +204,6 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             ? `تم رفض الدخول: الحساب الذي تم تسجيل الدخول به من Google هو (${cleanEmail}). لا يُسمح بالدخول إلى لوحة الإدارة إلا عبر حساب المالك الرسمي المعتمد (mahmoudahmedhessien032@gmail.com).`
             : `Unauthorized: Selected Google account (${cleanEmail}) is not the authorized owner (mahmoudahmedhessien032@gmail.com).`
         );
-        setIsGooglePopupActive(false);
         return;
       }
 
@@ -213,6 +220,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           : 'Google authentication failed. Please sign in with mahmoudahmedhessien032@gmail.com.')
       );
     } finally {
+      googlePopupLockRef.current = false;
       setIsGooglePopupActive(false);
     }
   };

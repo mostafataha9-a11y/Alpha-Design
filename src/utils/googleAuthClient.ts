@@ -55,66 +55,47 @@ export interface GoogleAuthUser {
 }
 
 let warmupPromise: Promise<void> | null = null;
-let sameOriginAuthInstance: Auth | null = null;
+let cachedAuthorizedDomains: string[] | null = null;
+let inFlightGoogleSignIn: Promise<GoogleAuthUser> | null = null;
 
-function getSameOriginAuth(): Auth | null {
-  if (typeof window === 'undefined') return null;
-  if (window.self !== window.top) return null;
-  if (!window.location.hostname.endsWith('.run.app')) return null;
-
-  if (!sameOriginAuthInstance) {
-    const appName = 'alpha-same-origin-auth';
-    const existing = getApps().find((a) => a.name === appName);
-    const sameOriginApp =
-      existing ||
-      initializeApp(
-        {
-          ...firebaseConfig,
-          authDomain: window.location.host,
-        },
-        appName
-      );
-    sameOriginAuthInstance = createResilientAuth(sameOriginApp);
-    sameOriginAuthInstance.languageCode = 'ar';
-  }
-  return sameOriginAuthInstance;
-}
-
-function preloadGapiScript(): Promise<void> {
-  if (typeof document === 'undefined') return Promise.resolve();
-  if ((window as any).gapi?.iframes) return Promise.resolve();
-
-  const existingScript = document.querySelector<HTMLScriptElement>(
-    'script[src^="https://apis.google.com/js/api.js"]'
-  );
-  if (existingScript) {
-    return new Promise((resolve) => {
-      if ((window as any).gapi) {
-        resolve();
-        return;
-      }
-      existingScript.addEventListener('load', () => resolve(), { once: true });
-      existingScript.addEventListener('error', () => resolve(), { once: true });
-      setTimeout(resolve, 1500);
-    });
-  }
-
-  return new Promise((resolve) => {
-    const script = document.createElement('script');
-    script.src = 'https://apis.google.com/js/api.js';
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => resolve();
-    document.head.appendChild(script);
-    setTimeout(resolve, 1500);
+function isHostnameAuthorized(hostname: string, domains: string[]): boolean {
+  const host = hostname.trim().toLowerCase();
+  if (!host) return false;
+  return domains.some((raw) => {
+    const domain = String(raw || '').trim().toLowerCase();
+    if (!domain) return false;
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(domain)) {
+      return host === domain;
+    }
+    const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^(.+\\.${escaped}|${escaped})$`, 'i');
+    return re.test(host);
   });
 }
 
+async function prefetchAuthorizedDomains(): Promise<string[] | null> {
+  if (cachedAuthorizedDomains) return cachedAuthorizedDomains;
+  if (!firebaseConfig.apiKey) return null;
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(firebaseConfig.apiKey)}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (Array.isArray(data?.authorizedDomains)) {
+      cachedAuthorizedDomains = data.authorizedDomains;
+      return cachedAuthorizedDomains;
+    }
+  } catch {
+    // Non-fatal network note; Firebase SDK will verify during auth
+  }
+  return null;
+}
+
 /**
- * Proactively initializes Firebase PopupRedirectResolver + gapi + auth iframe
+ * Proactively initializes Firebase PopupRedirectResolver + authorizedDomains cache
  * BEFORE the user clicks "Sign in with Google", preventing async gesture loss
- * that triggers browser popup blockers (`auth/popup-blocked`).
+ * (`auth/popup-blocked`) and unstable popup opening/closing.
  */
 export function warmUpGoogleAuth(): Promise<void> {
   if (typeof window === 'undefined') return Promise.resolve();
@@ -122,10 +103,12 @@ export function warmUpGoogleAuth(): Promise<void> {
 
   warmupPromise = (async () => {
     try {
-      await preloadGapiScript();
-      await getRedirectResult(auth, browserPopupRedirectResolver).catch(() => null);
+      await Promise.allSettled([
+        prefetchAuthorizedDomains(),
+        getRedirectResult(auth, browserPopupRedirectResolver).catch(() => null),
+      ]);
     } catch {
-      // Non-fatal warmup failure; sign-in flow will handle errors explicitly
+      // Non-fatal warmup failure; sign-in flow handles errors explicitly
     }
   })();
 
@@ -134,6 +117,7 @@ export function warmUpGoogleAuth(): Promise<void> {
 
 function formatGoogleAuthErrorMessage(error: any): string {
   const code = String(error?.code || '');
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
   if (code === 'auth/popup-blocked') {
     return 'تم حظر النافذة المنبثقة من قِبل المتصفح. يرجى السماح بالنوافذ المنبثقة (Popups) لهذا الموقع ثم إعادة المحاولة.';
   }
@@ -144,10 +128,12 @@ function formatGoogleAuthErrorMessage(error: any): string {
     return 'تم إلغاء طلب تسجيل الدخول السابق؛ يرجى الضغط مرة أخرى للمتابعة.';
   }
   if (code === 'auth/web-storage-unsupported') {
-    return 'المتصفح يمنع تخزين البيانات للجهات الخارجية داخل الإطار (Third-Party Storage/Cookies). يرجى السماح بالكوكيز للموقع أو فتح التطبيق في نافذة مستقلة.';
+    return 'المتصفح يمنع تخزين البيانات للجهات الخارجية داخل الإطار (Third-Party Storage/Cookies). يرجى السماح بالكوكيز لموقع firebaseapp.com أو فتح التطبيق في نافذة مستقلة.';
   }
   if (code === 'auth/unauthorized-domain') {
-    return 'النطاق الحالي غير مصرح به في إعدادات مصادقة Firebase.';
+    return currentHost
+      ? `النطاق الحالي (${currentHost}) غير مضاف في النطاقات المصرح بها (Authorized domains) في إعدادات مصادقة Firebase للمشروع (${firebaseConfig.projectId}). يمكنك إضافته من Firebase Console أو استخدام رابط المعاينة المعتمد أو كلمة المرور.`
+      : 'النطاق الحالي غير مصرح به في إعدادات مصادقة Firebase.';
   }
   if (code === 'auth/operation-not-allowed') {
     return 'تسجيل الدخول عبر مزود Google غير مفعّل في مشروع المصادقة.';
@@ -167,56 +153,56 @@ function formatGoogleAuthErrorMessage(error: any): string {
  * directly from the Google account signed in on the user's device.
  */
 export async function executeRealGoogleSignIn(): Promise<GoogleAuthUser> {
+  if (inFlightGoogleSignIn) {
+    return inFlightGoogleSignIn;
+  }
+
+  // Synchronous pre-check against prefetched Firebase authorizedDomains so we never
+  // flash-open a popup only for Firebase to close it ~500ms later with unauthorized-domain.
+  if (typeof window !== 'undefined' && cachedAuthorizedDomains) {
+    const host = window.location.hostname;
+    if (!isHostnameAuthorized(host, cachedAuthorizedDomains)) {
+      throw new Error(formatGoogleAuthErrorMessage({ code: 'auth/unauthorized-domain' }));
+    }
+  }
+
   const provider = createGoogleProvider();
 
-  try {
-    let result;
+  inFlightGoogleSignIn = (async () => {
     try {
-      result = await signInWithPopup(auth, provider, browserPopupRedirectResolver);
-    } catch (primaryErr: any) {
-      const code = String(primaryErr?.code || '');
-      const sameOriginAuth = getSameOriginAuth();
-      if (
-        sameOriginAuth &&
-        (code === 'auth/web-storage-unsupported' ||
-          code === 'auth/internal-error' ||
-          code === 'auth/network-request-failed')
-      ) {
-        result = await signInWithPopup(sameOriginAuth, provider, browserPopupRedirectResolver);
-      } else {
-        throw primaryErr;
+      const result = await signInWithPopup(auth, provider, browserPopupRedirectResolver);
+
+      const idToken = await result.user.getIdToken(true);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      const email = (result.user.email || '').trim().toLowerCase();
+      const name = result.user.displayName || 'الحضرى محمود';
+      const photoURL = result.user.photoURL || undefined;
+
+      if (!email || !idToken) {
+        throw new Error('لم يتم استرجاع بريد إلكتروني أو رمز تحقق موثق من حساب Google.');
       }
+
+      return {
+        email,
+        name,
+        photoURL,
+        idToken,
+        googleIdToken: credential?.idToken,
+      };
+    } catch (error: any) {
+      console.error('Google Sign-In Popup Error:', error);
+      throw new Error(formatGoogleAuthErrorMessage(error));
+    } finally {
+      inFlightGoogleSignIn = null;
     }
+  })();
 
-    const idToken = await result.user.getIdToken(true);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    const email = (result.user.email || '').trim().toLowerCase();
-    const name = result.user.displayName || 'الحضرى محمود';
-    const photoURL = result.user.photoURL || undefined;
-
-    if (!email || !idToken) {
-      throw new Error('لم يتم استرجاع بريد إلكتروني أو رمز تحقق موثق من حساب Google.');
-    }
-
-    return {
-      email,
-      name,
-      photoURL,
-      idToken,
-      googleIdToken: credential?.idToken,
-    };
-  } catch (error: any) {
-    console.error('Google Sign-In Popup Error:', error);
-    throw new Error(formatGoogleAuthErrorMessage(error));
-  }
+  return inFlightGoogleSignIn;
 }
 
 export async function signOutFromGoogle(): Promise<void> {
   try {
     await signOut(auth);
-    if (sameOriginAuthInstance) {
-      await signOut(sameOriginAuthInstance);
-    }
   } catch (e) {
     console.debug('Google sign-out error:', e);
   }
