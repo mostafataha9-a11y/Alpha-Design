@@ -79,7 +79,7 @@ export const InteractiveWordTooltip: React.FC<InteractiveWordTooltipProps> = ({
       {/* Floating Hover Tooltip Popover */}
       {isOpen && (
         <span
-          className="absolute z-50 bottom-full mb-2 start-1/2 -translate-x-1/2 w-72 sm:w-80 p-3.5 rounded-2xl bg-slate-900 text-white shadow-2xl border border-slate-700/80 text-start text-xs animate-in fade-in zoom-in-95 duration-150 block"
+          className="absolute z-50 bottom-full mb-2 start-1/2 ltr:-translate-x-1/2 rtl:translate-x-1/2 w-64 sm:w-80 max-w-[calc(100vw-2rem)] p-3.5 rounded-2xl bg-slate-900 text-white shadow-2xl border border-slate-700/80 text-start text-xs animate-in fade-in zoom-in-95 duration-150 block"
           dir={isAr ? 'rtl' : 'ltr'}
         >
           {/* Popover Header */}
@@ -105,7 +105,7 @@ export const InteractiveWordTooltip: React.FC<InteractiveWordTooltipProps> = ({
           </span>
 
           {/* Popover Pointer Arrow */}
-          <span className="absolute top-full start-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-900" />
+          <span className="absolute top-full start-1/2 ltr:-translate-x-1/2 rtl:translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-900" />
         </span>
       )}
     </span>

@@ -117,13 +117,13 @@ export const ArticlesView: React.FC<ArticlesViewProps> = ({
       />
 
       {/* Page Title & Hero Header */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-8 sm:p-12 border border-indigo-900/40 relative overflow-hidden shadow-xl">
+      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-5 sm:p-12 border border-indigo-900/40 relative overflow-hidden shadow-xl">
         <div className="relative z-10 max-w-2xl space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-semibold backdrop-blur-sm border border-blue-400/30">
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
             <span>{isAr ? 'أرشيف المقالات والمستجدات الإخبارية' : 'Articles & News Archive'}</span>
           </div>
-          <h1 className="text-3xl sm:text-4xl font-black">
+          <h1 className="text-2xl sm:text-4xl font-black">
             {isAr ? 'مقالات وأخبار الفا للديكور والدهانات' : 'Alpha Decor & Paints Articles'}
           </h1>
           <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
@@ -167,7 +167,7 @@ export const ArticlesView: React.FC<ArticlesViewProps> = ({
           </div>
 
           {/* Sort & View Mode */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
               <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
               <select

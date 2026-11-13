@@ -39,17 +39,17 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
-  // Content Security Policy tightened: eliminated wildcards, restricted frame and img domains
+  // Content Security Policy tightened: eliminated bare wildcards, permits Google OAuth / Firebase Auth protocols
   res.setHeader(
     'Content-Security-Policy',
     "default-src 'self'; " +
     `script-src ${scriptDirectives}; ` +
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com https://*.gstatic.com; " +
     "font-src 'self' https://fonts.gstatic.com data:; " +
     "img-src 'self' data: blob: https://images.unsplash.com https://*.google.com https://*.gstatic.com https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://res.cloudinary.com https://*.googleusercontent.com; " +
-    "connect-src 'self' https://generativelanguage.googleapis.com https://api.groq.com https://*.google.com https://*.googleapis.com https://pagead2.googlesyndication.com https://*.firebaseapp.com; " +
-    "frame-src 'self' https://www.google.com https://maps.google.com https://www.youtube.com https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://*.firebaseapp.com; " +
-    "frame-ancestors 'self' https://*.run.app https://aistudio.google.com; " +
+    "connect-src 'self' https://generativelanguage.googleapis.com https://api.groq.com https://*.google.com https://*.googleapis.com https://*.gstatic.com https://pagead2.googlesyndication.com https://*.firebaseapp.com https://*.firebaseio.com; " +
+    "frame-src 'self' https://www.google.com https://maps.google.com https://www.youtube.com https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://*.firebaseapp.com https://accounts.google.com https://apis.google.com https://*.google.com; " +
+    "frame-ancestors 'self' https://*.run.app https://aistudio.google.com https://*.google.com; " +
     "form-action 'self'; " +
     "object-src 'none'; " +
     "base-uri 'self';"
@@ -226,6 +226,49 @@ app.use(dbRouter);
 app.use(socialRouter);
 app.use(articleAiRouter);
 app.use(aiChatAssistRouter);
+
+// Same-Origin Reverse Proxy for Firebase Auth Helper (/__/auth/*)
+// Supports standalone top-level browser sessions even under strict 3rd-party cookie rules
+app.use('/__/auth', async (req: Request, res: Response) => {
+  try {
+    const cfgPath = path.resolve(__dirname, 'firebase-applet-config.json');
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    const authDomain = cfg.authDomain || `${cfg.projectId}.firebaseapp.com`;
+    const targetUrl = `https://${authDomain}/__/auth${req.url}`;
+
+    const headers: Record<string, string> = {};
+    if (req.headers['content-type']) {
+      headers['content-type'] = String(req.headers['content-type']);
+    }
+
+    const fetchOptions: RequestInit = {
+      method: req.method,
+      headers,
+      redirect: 'manual',
+    };
+
+    if (!['GET', 'HEAD'].includes(req.method.toUpperCase()) && req.body && Object.keys(req.body).length > 0) {
+      fetchOptions.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    }
+
+    const upstream = await fetch(targetUrl, fetchOptions);
+    res.status(upstream.status);
+
+    upstream.headers.forEach((value, key) => {
+      const lower = key.toLowerCase();
+      if (['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'strict-transport-security'].includes(lower)) {
+        return;
+      }
+      res.setHeader(key, value);
+    });
+
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.send(buf);
+  } catch (err) {
+    console.warn('Firebase /__/auth proxy error:', err);
+    res.status(502).send('Auth proxy unavailable');
+  }
+});
 
 // Export utilities for tests or external consumers
 export { countActualWords, allocateContextualDecorImages };

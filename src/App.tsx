@@ -510,7 +510,7 @@ export default function App() {
   return (
     <div
       dir={settings.direction}
-      className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors selection:bg-blue-600 selection:text-white"
+      className="min-h-screen max-w-full overflow-x-clip bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors selection:bg-blue-600 selection:text-white"
       style={{
         fontFamily:
           settings.language === 'ar'
@@ -549,7 +549,7 @@ export default function App() {
       )}
 
       {/* Main Page Body Protected by ErrorBoundary */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 pt-8">
+      <main className="flex-1 max-w-7xl w-full min-w-0 mx-auto px-3 sm:px-8 pt-5 sm:pt-8">
         <ErrorBoundary isRtl={settings.language === 'ar'}>
           {/* Public View 1: Home (Main feed with strict 3-10 articles pagination) */}
         {activeTab === 'home' && (
@@ -720,10 +720,10 @@ export default function App() {
       {!isChatBotOpen && (
         <button
           onClick={() => setIsChatBotOpen(true)}
-          className="fixed bottom-6 end-6 z-40 p-4 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 text-white shadow-2xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2 group ring-4 ring-blue-500/20 cursor-pointer"
+          className="fixed bottom-3 end-3 sm:bottom-6 sm:end-6 z-40 p-3 sm:p-4 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 text-white shadow-2xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2 group ring-2 sm:ring-4 ring-blue-500/20 cursor-pointer"
           aria-label="Open Alpha Chatbot"
         >
-          <Bot className="w-6 h-6 animate-bounce" />
+          <Bot className="w-5 h-5 sm:w-6 sm:h-6 animate-bounce" />
           <span className="hidden sm:inline font-bold text-xs pe-1">
             {settings.language === 'ar' ? 'بوت ألفا الذكي' : 'Alpha Bot'}
           </span>
@@ -733,12 +733,12 @@ export default function App() {
 
       {/* Floating Quick Navigation & Send/Share Capsule on all Subpages (الصفحة الفرعية -> الصفحة الرئيسية والإرسال) */}
       {activeTab !== 'home' && activeTab !== 'backend' && (
-        <div className="fixed bottom-6 start-6 z-40 flex items-center gap-2 p-1.5 rounded-full bg-slate-900/95 dark:bg-slate-900/95 text-white shadow-2xl ring-4 ring-blue-500/20 backdrop-blur-md border border-white/20 animate-in fade-in slide-in-from-bottom-3 duration-300">
+        <div className="fixed bottom-16 start-3 sm:bottom-6 sm:start-6 z-40 max-w-[calc(100vw-1.5rem)] flex items-center gap-1 sm:gap-2 p-1 sm:p-1.5 rounded-full bg-slate-900/95 dark:bg-slate-900/95 text-white shadow-2xl ring-2 sm:ring-4 ring-blue-500/20 backdrop-blur-md border border-white/20 animate-in fade-in slide-in-from-bottom-3 duration-300">
           {/* 1. Return to Home Button */}
           <button
             type="button"
             onClick={() => navigateToTab('home')}
-            className="px-3.5 py-2 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer"
+            className="px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-[11px] sm:text-xs flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer"
             aria-label={settings.language === 'ar' ? 'الرجوع المباشر للصفحة الرئيسية' : 'Return directly to Home'}
             title={settings.language === 'ar' ? 'الرجوع المباشر للصفحة الرئيسية' : 'Return to Home'}
           >
@@ -764,7 +764,7 @@ export default function App() {
           <button
             type="button"
             onClick={handleFloatingShare}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-full hover:bg-white/10 text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+            className="flex items-center gap-1 sm:gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-full hover:bg-white/10 text-slate-200 text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer"
             title={settings.language === 'ar' ? 'إرسال ومشاركة الرابط' : 'Share & send link'}
           >
             {floatingCopied ? (

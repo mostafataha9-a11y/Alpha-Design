@@ -67,7 +67,7 @@ export const SmartAdBanner: React.FC<SmartAdBannerProps> = ({
   // Determine styling based on placement
   const placementStyles: Record<AdPlacementId, { wrapper: string; bannerMaxH: string; defaultH: number }> = {
     header: {
-      wrapper: 'w-full max-w-7xl mx-auto my-3 px-4',
+      wrapper: 'w-full max-w-7xl mx-auto my-3 px-3 sm:px-4',
       bannerMaxH: 'max-h-[110px] sm:max-h-[120px]',
       defaultH: 90,
     },
@@ -259,7 +259,7 @@ export const SmartAdBanner: React.FC<SmartAdBannerProps> = ({
             </a>
           ) : (
             /* Fallback tasteful sponsor invitation */
-            <div className="w-full py-4 px-6 text-center rounded-xl bg-gradient-to-r from-blue-600/10 via-indigo-600/10 to-violet-600/10 border border-blue-200/60 dark:border-blue-900/60 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="w-full py-3 px-4 sm:py-4 sm:px-6 text-center rounded-xl bg-gradient-to-r from-blue-600/10 via-indigo-600/10 to-violet-600/10 border border-blue-200/60 dark:border-blue-900/60 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="text-start space-y-0.5">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-blue-700 dark:text-blue-300">
                   <ShieldCheck className="w-4 h-4 text-blue-600" />

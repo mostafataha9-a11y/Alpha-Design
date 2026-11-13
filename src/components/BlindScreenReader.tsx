@@ -868,7 +868,7 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
         fixed bottom-6 right-6 z-40
       */}
       {!isOpen && (
-        <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2">
+        <div className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-40 flex flex-col items-end gap-2 max-w-[calc(100vw-1.5rem)]">
           {/* Audio Pulsing Waves indicator when active/speaking */}
           {isSpeaking && (
             <div className="bg-amber-500 text-slate-950 text-[10px] font-black px-2.5 py-1 rounded-full shadow-lg animate-pulse flex items-center gap-1.5 border border-amber-300">
@@ -883,27 +883,27 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
               setIsOpen(true);
               playTone('start');
             }}
-            className="group relative p-4 rounded-3xl bg-gradient-to-tr from-amber-600 via-amber-500 to-yellow-400 text-slate-950 font-black shadow-2xl hover:scale-105 active:scale-95 transition-all duration-300 flex items-center gap-3 ring-4 ring-amber-400/40 border-2 border-amber-300/80 cursor-pointer"
+            className="group relative p-2.5 sm:p-4 rounded-2xl sm:rounded-3xl bg-gradient-to-tr from-amber-600 via-amber-500 to-yellow-400 text-slate-950 font-black shadow-2xl hover:scale-105 active:scale-95 transition-all duration-300 flex items-center gap-2 sm:gap-3 ring-2 sm:ring-4 ring-amber-400/40 border-2 border-amber-300/80 cursor-pointer max-w-full"
             aria-label="افتح قارئ الشاشة للمكفوفين والمضيف الصوتي"
             title="قارئ الشاشة والمضيف الصوتي للمكفوفين (Alt + S)"
           >
             {/* Pulsing Accessibility Icon */}
-            <div className="w-8 h-8 rounded-2xl bg-slate-950 text-amber-400 flex items-center justify-center shadow-md group-hover:rotate-6 transition-transform">
-              <Volume2 className="w-5 h-5 animate-pulse" />
+            <div className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-xl sm:rounded-2xl bg-slate-950 text-amber-400 flex items-center justify-center shadow-md group-hover:rotate-6 transition-transform">
+              <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 animate-pulse" />
             </div>
 
-            <div className="text-start leading-tight pe-1">
-              <span className="block text-xs font-black tracking-wide text-slate-950">
+            <div className="text-start leading-tight pe-0.5 sm:pe-1 min-w-0">
+              <span className="block text-[11px] sm:text-xs font-black tracking-wide text-slate-950 truncate">
                 قارئ الشاشة للمكفوفين
               </span>
-              <span className="block text-[10px] font-bold text-slate-900/80">
+              <span className="hidden sm:block text-[10px] font-bold text-slate-900/80">
                 قراءة فورية وسريعة • {ownerName}
               </span>
             </div>
 
             {/* Glowing tactile badge */}
-            <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 absolute -top-1 -start-1 ring-2 ring-white animate-ping"></span>
-            <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 absolute -top-1 -start-1 ring-2 ring-white"></span>
+            <span className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-emerald-500 absolute -top-1 -start-1 ring-2 ring-white animate-ping"></span>
+            <span className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-emerald-500 absolute -top-1 -start-1 ring-2 ring-white"></span>
           </button>
         </div>
       )}
@@ -914,7 +914,7 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
           role="region"
           aria-label="قارئ الشاشة الذكي للمكفوفين والمضيف الصوتي لمدونة ألفا ديزاين"
           aria-live="polite"
-          className="fixed bottom-0 sm:bottom-6 right-0 sm:right-6 z-50 w-full sm:w-[480px] h-[92vh] sm:h-[680px] max-h-[92vh] bg-slate-950 text-white rounded-t-3xl sm:rounded-3xl shadow-2xl border-2 border-amber-500/50 flex flex-col overflow-hidden ring-8 ring-amber-500/20 backdrop-blur-xl animate-in slide-in-from-bottom duration-300"
+          className="fixed bottom-0 sm:bottom-6 right-0 sm:right-6 z-50 w-full sm:w-[480px] max-w-full h-[92vh] sm:h-[680px] max-h-[92vh] bg-slate-950 text-white rounded-t-3xl sm:rounded-3xl shadow-2xl border-2 border-amber-500/50 flex flex-col overflow-hidden ring-0 sm:ring-8 ring-amber-500/20 backdrop-blur-xl animate-in slide-in-from-bottom duration-300"
         >
           {/* Header Bar with High Contrast & Voice Indicator */}
           <header className="p-4 sm:p-5 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-500 text-slate-950 flex items-center justify-between border-b-2 border-amber-400">

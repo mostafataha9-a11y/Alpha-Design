@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Lock,
   ShieldCheck,
@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { AdminUser, SiteSettings } from '../types/blog';
 import { AuthorBadge } from './AuthorBadge';
-import { executeRealGoogleSignIn, signOutFromGoogle, GoogleAuthUser } from '../utils/googleAuthClient';
+import { executeRealGoogleSignIn, signOutFromGoogle, warmUpGoogleAuth, GoogleAuthUser } from '../utils/googleAuthClient';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -63,6 +63,17 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const [generatedEmergencyKey, setGeneratedEmergencyKey] = useState('');
   const [emergencyKeyInput, setEmergencyKeyInput] = useState('');
   const [copiedKey, setCopiedKey] = useState(false);
+
+  // Pre-warm Firebase Auth iframe & gapi when modal opens so popup never loses user gesture
+  useEffect(() => {
+    if (isOpen) {
+      warmUpGoogleAuth();
+    } else {
+      setAuthorizedGoogleAccount(null);
+      setErrorMsg('');
+      setSuccessMsg('');
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -191,7 +202,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
       setAuthorizedGoogleAccount(googleUser);
       // Proceed with real Google account session creation
-      await handleGoogleLogin(cleanEmail, googleUser.name, googleUser.idToken);
+      await handleGoogleLogin(cleanEmail, googleUser.name, googleUser.idToken, googleUser.googleIdToken);
     } catch (err: any) {
       console.warn('Real Google OAuth note:', err);
       // Explicitly reject and guide user without any bypass or backdoor
@@ -210,7 +221,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const handleGoogleLogin = async (
     targetEmail: string = 'mahmoudahmedhessien032@gmail.com',
     targetName?: string,
-    idToken?: string
+    idToken?: string,
+    googleIdToken?: string
   ) => {
     setErrorMsg('');
     setSuccessMsg('');
@@ -232,6 +244,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           email: cleanEmail,
           name: targetName || ownerName,
           idToken,
+          googleIdToken,
         }),
       });
 
@@ -239,6 +252,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
       if (!response.ok) {
         setErrorMsg(data.error || (isAr ? 'فشل تسجيل الدخول بحساب Google. تأكد من أن بريدك هو حساب المالك المعتمد.' : 'Google sign-in failed.'));
         setIsVerifying(false);
+        setAuthorizedGoogleAccount(null);
         return;
       }
 
@@ -262,9 +276,9 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     } catch (err: any) {
       console.error('Google login error:', err);
       setErrorMsg(isAr ? 'تعذر الاتصال بخادم المصادقة.' : 'Failed to connect to auth server.');
+      setAuthorizedGoogleAccount(null);
     } finally {
       setIsVerifying(false);
-      setAuthorizedGoogleAccount(null);
     }
   };
 
@@ -392,10 +406,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full max-h-[92vh] overflow-y-auto border border-slate-200 dark:border-slate-800 shadow-2xl animate-in zoom-in-95 duration-200">
         {/* Header */}
-        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 relative">
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-5 sm:p-6 relative">
           <button
             onClick={onClose}
             className="absolute top-4 end-4 p-2 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
@@ -428,9 +442,9 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6">
+        <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
           {/* Owner Identity Highlight */}
-          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-3">
               <AuthorBadge name={ownerName} size="md" />
               <div>
@@ -513,7 +527,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                         handleGoogleLogin(
                           authorizedGoogleAccount.email,
                           authorizedGoogleAccount.name,
-                          authorizedGoogleAccount.idToken
+                          authorizedGoogleAccount.idToken,
+                          authorizedGoogleAccount.googleIdToken
                         )
                       }
                       disabled={isVerifying}

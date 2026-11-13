@@ -51,7 +51,7 @@ export const SubpageBreadcrumb: React.FC<SubpageBreadcrumbProps> = ({
       className="bg-white dark:bg-slate-900 rounded-2xl p-3 sm:p-4 border border-slate-200 dark:border-slate-800 shadow-xs mb-6 flex flex-wrap items-center justify-between gap-3 text-xs"
     >
       {/* Breadcrumb Trail */}
-      <ol className="flex items-center flex-wrap gap-1.5 text-slate-500 dark:text-slate-400">
+      <ol className="flex items-center flex-wrap gap-1.5 text-slate-500 dark:text-slate-400 min-w-0 max-w-full">
         <li className="inline-flex items-center">
           <button
             type="button"
@@ -85,7 +85,7 @@ export const SubpageBreadcrumb: React.FC<SubpageBreadcrumbProps> = ({
           </>
         )}
 
-        <li className="font-bold text-slate-900 dark:text-white line-clamp-1 max-w-[200px] sm:max-w-md">
+        <li className="font-bold text-slate-900 dark:text-white line-clamp-1 max-w-full sm:max-w-md min-w-0">
           {currentPageTitle}
         </li>
       </ol>

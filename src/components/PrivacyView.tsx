@@ -27,7 +27,7 @@ export const PrivacyView: React.FC<PrivacyViewProps> = ({ settings, onNavigateHo
           <ShieldCheck className="w-4 h-4" />
           <span>{isAr ? 'سياسة الخصوصية وحماية البيانات' : 'Privacy & Data Protection Policy'}</span>
         </div>
-        <h1 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white">
+        <h1 className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-white">
           {isAr ? 'سياسة الخصوصية لمدونة الفا للديكور والدهانات' : 'Alpha Decor & Paints Privacy Policy'}
         </h1>
         <p className="text-slate-500 text-xs sm:text-sm">
@@ -52,7 +52,7 @@ export const PrivacyView: React.FC<PrivacyViewProps> = ({ settings, onNavigateHo
 
 
       {/* Main Content Body */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-10 border border-slate-200 dark:border-slate-800 shadow-sm space-y-8 text-slate-700 dark:text-slate-300 leading-relaxed text-xs sm:text-sm">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-10 border border-slate-200 dark:border-slate-800 shadow-sm space-y-8 text-slate-700 dark:text-slate-300 leading-relaxed text-xs sm:text-sm break-words">
         <section className="space-y-3">
           <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Lock className="w-5 h-5 text-blue-600" />

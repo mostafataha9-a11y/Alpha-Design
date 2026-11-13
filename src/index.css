@@ -18,6 +18,8 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 body {
@@ -27,6 +29,17 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  max-width: 100%;
+  overflow-x: clip;
+  margin: 0;
+}
+
+img, video, iframe {
+  max-width: 100%;
+}
+
+pre, code {
+  max-width: 100%;
 }
 
 /* Enforce pure Modern Standard Arabic across all Tailwind font utility classes */

@@ -1,5 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getAuth as getFirebaseAdminAuth } from 'firebase-admin/auth';
 import {
   verifyOwnerCredentials,
   verifyGoogleAuth,
@@ -16,6 +21,100 @@ import {
   resetDbRateLimit,
   DbAuthUser,
 } from '../db/repo.ts';
+
+const __authFilename = fileURLToPath(import.meta.url);
+const __authDirname = path.dirname(__authFilename);
+
+function loadFirebaseConfig(): { projectId?: string; apiKey?: string; oAuthClientId?: string } {
+  try {
+    const cfgPath = path.resolve(__authDirname, '../../firebase-applet-config.json');
+    return JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+const firebaseCfg = loadFirebaseConfig();
+const firebaseAdminApp =
+  getApps().length > 0
+    ? getApps()[0]
+    : initializeApp({ projectId: firebaseCfg.projectId || 'gen-lang-client-0878528385' });
+
+async function verifyGoogleTokenOnServer(
+  idToken?: string,
+  googleIdToken?: string
+): Promise<{ valid: boolean; email?: string; name?: string; error?: string }> {
+  // 1. Verify Firebase Auth ID token cryptographically via firebase-admin
+  if (idToken && typeof idToken === 'string' && idToken.trim().length > 20) {
+    try {
+      const decoded = await getFirebaseAdminAuth(firebaseAdminApp).verifyIdToken(idToken.trim());
+      const signInProvider = decoded.firebase?.sign_in_provider;
+      const email = (decoded.email || '').trim().toLowerCase();
+
+      if (!email || decoded.email_verified !== true) {
+        return { valid: false, error: 'حساب Google لم يتم التحقق من بريده الإلكتروني.' };
+      }
+      if (signInProvider && signInProvider !== 'google.com') {
+        return { valid: false, error: 'يجب تسجيل الدخول حصراً عبر مزود Google الرسمي.' };
+      }
+      return { valid: true, email, name: decoded.name || 'الحضرى محمود' };
+    } catch (adminErr: any) {
+      // Fallback: Verify Firebase ID token directly with Google Identity Toolkit REST endpoint
+      if (firebaseCfg.apiKey) {
+        try {
+          const lookupRes = await fetch(
+            `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseCfg.apiKey)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ idToken: idToken.trim() }),
+            }
+          );
+          if (lookupRes.ok) {
+            const lookupData: any = await lookupRes.json();
+            const userRecord = lookupData?.users?.[0];
+            const email = (userRecord?.email || '').trim().toLowerCase();
+            const hasGoogleProvider = Array.isArray(userRecord?.providerUserInfo)
+              ? userRecord.providerUserInfo.some((p: any) => p.providerId === 'google.com')
+              : true;
+
+            if (email && userRecord?.emailVerified && hasGoogleProvider) {
+              return { valid: true, email, name: userRecord.displayName || 'الحضرى محمود' };
+            }
+          }
+        } catch {
+          // Fall through to error handling
+        }
+      }
+      console.warn('Firebase ID token verification failed:', adminErr?.message || adminErr);
+    }
+  }
+
+  // 2. Fallback: Verify raw Google OAuth2 ID Token via Google TokenInfo endpoint
+  if (googleIdToken && typeof googleIdToken === 'string' && googleIdToken.trim().length > 20) {
+    try {
+      const infoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(googleIdToken.trim())}`
+      );
+      if (infoRes.ok) {
+        const info: any = await infoRes.json();
+        const email = (info.email || '').trim().toLowerCase();
+        const audOk = !firebaseCfg.oAuthClientId || info.aud === firebaseCfg.oAuthClientId;
+        const verifiedOk = info.email_verified === true || info.email_verified === 'true';
+        if (email && audOk && verifiedOk) {
+          return { valid: true, email, name: info.name || 'الحضرى محمود' };
+        }
+      }
+    } catch {
+      // Ignore network failure
+    }
+  }
+
+  return {
+    valid: false,
+    error: 'تعذر التحقق التشفيري من توكن تفويض Google. يرجى إتمام المصادقة من نافذة Google الرسمية.',
+  };
+}
 
 export const authRouter = Router();
 
@@ -212,6 +311,7 @@ authRouter.post('/api/auth/login', async (req: Request, res: Response) => {
 
 /**
  * Google Sign-In Endpoint (Strictly Enforced for Official Owner: mahmoudahmedhessien032@gmail.com)
+ * Verifies real Firebase/Google ID token cryptographically before issuing admin session.
  */
 authRouter.post('/api/auth/google', async (req: Request, res: Response) => {
   try {
@@ -223,22 +323,32 @@ authRouter.post('/api/auth/google', async (req: Request, res: Response) => {
       });
     }
 
-    const { email, name } = req.body;
-    if (!email || typeof email !== 'string') {
-      return res.status(400).json({ error: 'البريد الإلكتروني لحساب Google مطلوب.' });
+    const { idToken, googleIdToken, name } = req.body || {};
+    if ((!idToken || typeof idToken !== 'string') && (!googleIdToken || typeof googleIdToken !== 'string')) {
+      return res.status(401).json({
+        error: 'رمز التفويض الرسمي من Google (ID Token) مطلوب لتأكيد الهوية.',
+      });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
+    const verifiedToken = await verifyGoogleTokenOnServer(idToken, googleIdToken);
+    if (!verifiedToken.valid || !verifiedToken.email) {
+      await recordDbFailedLogin(ip);
+      return res.status(401).json({
+        error: verifiedToken.error || 'فشل التحقق من مصادقة Google الرسمية.',
+      });
+    }
+
+    const cleanEmail = verifiedToken.email.trim().toLowerCase();
 
     // Strict owner verification per owner instruction
     if (cleanEmail !== 'mahmoudahmedhessien032@gmail.com') {
       await recordDbFailedLogin(ip);
       return res.status(403).json({
-        error: 'تم رفض الدخول: تسجيل الدخول عبر Google محصور حصراً بحساب المالك الرسمي المعتمد (mahmoudahmedhessien032@gmail.com).',
+        error: `تم رفض الدخول: الحساب المسجل (${cleanEmail}) ليس حساب المالك الرسمي المعتمد (mahmoudahmedhessien032@gmail.com).`,
       });
     }
 
-    const authResult = await verifyGoogleAuth(cleanEmail, name);
+    const authResult = await verifyGoogleAuth(cleanEmail, verifiedToken.name || name);
     if (!authResult.valid || !authResult.user) {
       await recordDbFailedLogin(ip);
       return res.status(403).json({
@@ -375,6 +485,7 @@ authRouter.post('/api/auth/change-password', requireAdminAuth, async (req: AuthR
       sameSite: isHttps ? 'none' : 'lax',
       path: '/',
       maxAge: 7 * 24 * 3600 * 1000,
+      partitioned: isHttps,
     });
 
     res.json({
@@ -670,6 +781,7 @@ authRouter.post('/api/auth/2fa/emergency-key/verify', async (req: Request, res: 
       sameSite: isHttps ? 'none' : 'lax',
       path: '/',
       maxAge: 7 * 24 * 3600 * 1000,
+      partitioned: isHttps,
     });
 
     res.json({

@@ -174,20 +174,20 @@ export const HomeView: React.FC<HomeViewProps> = ({
       />
 
       {/* Hero Section with Blog Description and Social Links */}
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-6 sm:p-10 shadow-xl border border-slate-800">
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-4 sm:p-10 shadow-xl border border-slate-800">
 
         <div className="absolute top-0 end-0 -mt-16 -me-16 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
         <div className="absolute bottom-0 start-0 -mb-16 -ms-16 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
-        <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+        <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 items-center">
           {/* Hero Content */}
-          <div className="lg:col-span-7 space-y-5">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-semibold border border-blue-400/30">
-              <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-              <span>{isAr ? 'المنصة الرسمية لإبداعات الديكور والدهانات الحديثة' : 'Official Decor & Modern Paints Platform'}</span>
+          <div className="lg:col-span-7 space-y-4 sm:space-y-5 min-w-0">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-semibold border border-blue-400/30 max-w-full">
+              <Sparkles className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              <span className="truncate sm:whitespace-normal">{isAr ? 'المنصة الرسمية لإبداعات الديكور والدهانات الحديثة' : 'Official Decor & Modern Paints Platform'}</span>
             </div>
 
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
+            <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
               {isAr ? (
                 <>
                   مدونة <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-300 to-amber-300">الفا للديكور والدهانات</span> | إشراف الحضرى محمود
@@ -283,9 +283,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <button
                 type="button"
                 onClick={() => (onOpenChatBot ? onOpenChatBot('negotiate') : setActiveTab('contact'))}
-                className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-blue-600 hover:from-emerald-600 hover:to-blue-700 text-white font-bold text-xs sm:text-sm shadow-xl shadow-emerald-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer ring-2 ring-emerald-400/30"
+                className="flex items-center justify-center gap-2 px-4 sm:px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-blue-600 hover:from-emerald-600 hover:to-blue-700 text-white font-bold text-xs sm:text-sm shadow-xl shadow-emerald-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer ring-2 ring-emerald-400/30 text-center max-w-full"
               >
-                <Bot className="w-4 h-4 animate-bounce" />
+                <Bot className="w-4 h-4 animate-bounce shrink-0" />
                 <span>{isAr ? '💼 طلب عمل والتفاوض على الأسعار مع المساعد الذكي' : 'Request Work & Price Negotiation'}</span>
               </button>
               <button
@@ -307,7 +307,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           {heroArticle && (
             <div
               onClick={() => onSelectArticle(heroArticle)}
-              className="lg:col-span-5 bg-white/10 dark:bg-slate-900/40 backdrop-blur-md rounded-2xl p-4 border border-white/15 hover:border-white/30 transition-all cursor-pointer group shadow-2xl"
+              className="lg:col-span-5 min-w-0 bg-white/10 dark:bg-slate-900/40 backdrop-blur-md rounded-2xl p-3.5 sm:p-4 border border-white/15 hover:border-white/30 transition-all cursor-pointer group shadow-2xl"
             >
               <div className="relative aspect-16/10 rounded-xl overflow-hidden mb-4">
                 <img
@@ -356,7 +356,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
       {/* 2026 Exclusive Decor & Paints News Section (قسم أحدث الأخبار والمستجدات الديكورية لعام 2026) */}
       {newsArticles.length > 0 && (
-        <section className="bg-gradient-to-b from-slate-900 via-slate-900 to-indigo-950/80 rounded-3xl p-6 sm:p-8 border border-indigo-500/20 shadow-2xl relative overflow-hidden">
+        <section className="bg-gradient-to-b from-slate-900 via-slate-900 to-indigo-950/80 rounded-3xl p-4 sm:p-8 border border-indigo-500/20 shadow-2xl relative overflow-hidden">
           {/* Subtle Ambient Light */}
           <div className="absolute top-0 end-1/4 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -372,7 +372,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   {isAr ? 'تغطية إخبارية حصرية ومباشرة 2026' : 'Live Breaking News 2026'}
                 </span>
               </div>
-              <h2 className="text-2xl sm:text-3xl font-black text-white flex items-center gap-2.5">
+              <h2 className="text-xl sm:text-3xl font-black text-white flex items-center gap-2.5">
                 <Newspaper className="w-6 h-6 text-amber-400 shrink-0" />
                 <span>{isAr ? 'أحدث أخبار وتقارير الديكور والدهانات' : 'Latest Decor & Paint Market News'}</span>
               </h2>
@@ -475,7 +475,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* Main Content Layout (Articles Grid + WordPress Sidebar) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Main Feed Column */}
-        <main className="lg:col-span-8 space-y-6">
+        <main className="lg:col-span-8 space-y-6 min-w-0">
           {/* Filter Bar: Categories, Search, Layout & Articles per page indicator */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
             {/* Search Input */}
@@ -721,7 +721,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </main>
 
         {/* WordPress Sidebar */}
-        <aside className="lg:col-span-4 space-y-6">
+        <aside className="lg:col-span-4 space-y-6 min-w-0">
           {/* Animated 3D Coin Badge & Follow Blog Widget (إشراف الحضرى محمود) */}
           <HadaryCoinFollowWidget variant="card" ownerName={settings.authorName} isAr={isAr} />
 

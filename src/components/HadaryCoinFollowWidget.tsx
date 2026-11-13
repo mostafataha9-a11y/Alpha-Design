@@ -173,14 +173,16 @@ export const HadaryCoinFollowWidget: React.FC<HadaryCoinFollowWidgetProps> = ({
   // -------------------------------------------------------------
   // ANIMATED 3D GOLD COIN COMPONENT («عملة الحضرى المعدنية المتحركة»)
   // -------------------------------------------------------------
-  const renderCoin = (size: 'sm' | 'md' | 'lg' = 'md') => {
+  const renderCoin = (size: 'xs' | 'sm' | 'md' | 'lg' = 'md') => {
     const sizeClasses = {
+      xs: 'w-9 h-9 sm:w-11 sm:h-11',
       sm: 'w-14 h-14',
       md: 'w-24 h-24 sm:w-28 sm:h-28',
       lg: 'w-32 h-32 sm:w-36 sm:h-36',
     }[size];
 
     const fontSize = {
+      xs: 'text-[9px] sm:text-[10px]',
       sm: 'text-xs',
       md: 'text-base sm:text-lg',
       lg: 'text-lg sm:text-xl',
@@ -448,7 +450,7 @@ export const HadaryCoinFollowWidget: React.FC<HadaryCoinFollowWidgetProps> = ({
 
         {/* Toast */}
         {successToast && (
-          <div className="fixed bottom-6 start-6 z-50 p-3.5 rounded-2xl bg-emerald-600 text-white text-xs font-bold shadow-2xl animate-in fade-in">
+          <div className="fixed bottom-6 start-3 sm:start-6 z-50 max-w-[calc(100vw-1.5rem)] p-3.5 rounded-2xl bg-emerald-600 text-white text-xs font-bold shadow-2xl animate-in fade-in">
             {successToast}
           </div>
         )}
@@ -465,28 +467,28 @@ export const HadaryCoinFollowWidget: React.FC<HadaryCoinFollowWidgetProps> = ({
     return (
       <>
         <div
-          className={`fixed bottom-6 start-6 z-40 flex items-center gap-2.5 p-2 pe-4 rounded-full bg-slate-900/95 text-white border border-amber-500/40 shadow-2xl backdrop-blur-md hover:scale-105 transition-all cursor-pointer group ${className}`}
+          className={`fixed bottom-16 start-3 sm:bottom-6 sm:start-6 z-40 max-w-[calc(100vw-1.5rem)] flex items-center gap-1.5 sm:gap-2.5 p-1.5 pe-2.5 sm:p-2 sm:pe-4 rounded-full bg-slate-900/95 text-white border border-amber-500/40 shadow-2xl backdrop-blur-md hover:scale-105 transition-all cursor-pointer group ${className}`}
           onClick={handleToggleFollow}
           title={isAr ? 'متابعة مدونة الحضرى للديكور' : 'Follow Al-Hadari Blog'}
         >
           {/* Mini Coin in floating pill */}
-          <div className="w-10 h-10 rounded-full shrink-0 relative">
-            {renderCoin('sm')}
+          <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-full shrink-0 relative">
+            {renderCoin('xs')}
           </div>
 
-          <div className="text-start">
-            <span className="block text-xs font-black text-amber-300 group-hover:text-amber-200 transition-colors">
+          <div className="text-start min-w-0">
+            <span className="block text-[11px] sm:text-xs font-black text-amber-300 group-hover:text-amber-200 transition-colors truncate">
               {isFollowing
                 ? (isAr ? 'أنت تتابع المدونة ✓' : 'Following ✓')
                 : (isAr ? 'تابعنا ليصلك كل جديد' : 'Follow For Updates')}
             </span>
-            <span className="block text-[10px] text-slate-400">
+            <span className="hidden sm:block text-[10px] text-slate-400">
               {isAr ? 'إشراف الحضرى محمود' : 'Al-Hadari Decor'}
             </span>
           </div>
 
-          <div className="ms-1 w-7 h-7 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300">
-            {isFollowing ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Bell className="w-3.5 h-3.5 animate-bounce" />}
+          <div className="ms-0.5 sm:ms-1 w-6 h-6 sm:w-7 sm:h-7 shrink-0 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300">
+            {isFollowing ? <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" /> : <Bell className="w-3 h-3 sm:w-3.5 sm:h-3.5 animate-bounce" />}
           </div>
         </div>
 

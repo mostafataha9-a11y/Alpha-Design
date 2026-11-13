@@ -83,7 +83,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ settings, onOpenChatBo
           <Mail className="w-3.5 h-3.5" />
           <span>{isAr ? 'تواصل مع إدارة الفا للديكور والدهانات' : 'Contact Alpha Decor & Paints'}</span>
         </div>
-        <h1 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white">
+        <h1 className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-white">
           {isAr ? 'يسعدنا دائماً الاستماع إلى استفساراتكم وطلبات المعاينة' : "We'd love to hear from you"}
         </h1>
         <p className="text-slate-500 text-sm leading-relaxed">
@@ -108,7 +108,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ settings, onOpenChatBo
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Contact Form Card */}
-        <div className="lg:col-span-7 bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div className="lg:col-span-7 min-w-0 bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm">
           {isSubmitted ? (
             <div className="text-center py-12 space-y-4">
               <div className="w-16 h-16 rounded-3xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
@@ -226,8 +226,8 @@ export const ContactView: React.FC<ContactViewProps> = ({ settings, onOpenChatBo
         </div>
 
         {/* Info & Social Channels */}
-        <div className="lg:col-span-5 space-y-6">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
+        <div className="lg:col-span-5 min-w-0 space-y-6">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
             <h3 className="font-bold text-base text-slate-900 dark:text-white">
               {isAr ? 'قنوات التواصل المباشرة' : 'Direct Channels'}
             </h3>

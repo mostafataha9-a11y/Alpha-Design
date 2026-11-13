@@ -61,8 +61,8 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors shadow-xs">
       {/* Top Utility Bar with Social Media and Date */}
-      <div className="bg-slate-900 text-slate-300 text-xs py-1.5 px-4 sm:px-8 border-b border-slate-800">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <div className="bg-slate-900 text-slate-300 text-xs py-1.5 px-3 sm:px-8 border-b border-slate-800">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-4">
             <span className="hidden sm:inline-flex items-center gap-1.5 text-slate-400">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -79,11 +79,11 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Social Links from Settings */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 ms-auto">
             <span className="text-[11px] text-slate-400 hidden lg:inline">
               {isAr ? 'تابعنا على:' : 'Follow us:'}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
               {social.facebook && (
                 <a
                   href={social.facebook}
@@ -178,22 +178,22 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Main Navigation Bar */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-3.5">
-        <div className="flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-3 sm:px-8 py-2.5 sm:py-3.5">
+        <div className="flex items-center justify-between gap-1.5 sm:gap-4 min-w-0">
           {/* Logo / Brand Name */}
           <div
             onClick={() => setActiveTab('home')}
-            className="flex items-center gap-3 cursor-pointer group select-none"
+            className="flex items-center gap-2 sm:gap-3 cursor-pointer group select-none min-w-0 flex-1 lg:flex-initial"
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-violet-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
-              <span className="font-black text-xl tracking-tighter">α</span>
+            <div className="w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-violet-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
+              <span className="font-black text-lg sm:text-xl tracking-tighter">α</span>
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xl font-black tracking-tight text-slate-900 dark:text-white">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                <span className="text-sm sm:text-xl font-black tracking-tight text-slate-900 dark:text-white truncate">
                   {settings.blogName}
                 </span>
-                <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-semibold uppercase tracking-wider">
+                <span className="hidden sm:inline-block shrink-0 text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-semibold uppercase tracking-wider">
                   {settings.blogNameEn}
                 </span>
               </div>
@@ -226,11 +226,11 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
 
           {/* Quick Right Actions: Blind Screen Reader, ChatBot & Admin Portal */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1 sm:gap-2.5 shrink-0">
             {/* Follow Blog Quick Button («تابعنا ليصلك كل جديد») */}
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('open-hadary-follow-modal'))}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-300 text-slate-950 text-xs sm:text-sm font-black shadow-sm shadow-amber-500/20 active:scale-95 transition-all cursor-pointer border border-amber-300 ring-2 ring-amber-400/20"
+              className="flex items-center gap-1.5 px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-300 text-slate-950 text-xs sm:text-sm font-black shadow-sm shadow-amber-500/20 active:scale-95 transition-all cursor-pointer border border-amber-300 ring-1 sm:ring-2 ring-amber-400/20"
               title={isAr ? 'تابعنا ليصلك كل جديد - إشراف الحضرى محمود' : 'Follow Blog For Updates'}
             >
               <Bell className="w-4 h-4 text-slate-950 animate-bounce" />
@@ -240,7 +240,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Screen Reader & Audio Host for the Blind */}
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('open-blind-screen-reader'))}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 text-slate-950 text-xs sm:text-sm font-black shadow-sm hover:opacity-95 active:scale-95 transition-all cursor-pointer border border-amber-300 ring-2 ring-amber-400/20"
+              className="flex items-center gap-1.5 px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 text-slate-950 text-xs sm:text-sm font-black shadow-sm hover:opacity-95 active:scale-95 transition-all cursor-pointer border border-amber-300 ring-1 sm:ring-2 ring-amber-400/20"
               title={isAr ? 'قارئ الشاشة للمكفوفين والمضيف الصوتي (Alt + S)' : 'Screen Reader for the Blind (Alt + S)'}
               aria-label="قارئ الشاشة للمكفوفين والمضيف الصوتي"
             >
@@ -251,19 +251,19 @@ export const Header: React.FC<HeaderProps> = ({
             {/* AI Chatbot Launcher Button */}
             <button
               onClick={onOpenBot}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs sm:text-sm font-semibold shadow-sm hover:opacity-95 active:scale-95 transition-all cursor-pointer"
+              className="flex items-center gap-1 sm:gap-2 px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs sm:text-sm font-semibold shadow-sm hover:opacity-95 active:scale-95 transition-all cursor-pointer"
               title={isAr ? 'افتح بوت ألفا الذكي' : 'Open Alpha Bot'}
             >
               <Bot className="w-4 h-4" />
               <span className="hidden sm:inline">{isAr ? 'بوت ألفا' : 'Alpha Bot'}</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-300 animate-ping"></span>
+              <span className="w-2 h-2 rounded-full bg-emerald-300 animate-ping hidden sm:inline-block"></span>
             </button>
 
             {/* Backend / Admin Entrance (Owner & Supervisors) */}
             {adminUser?.isLoggedIn ? (
               <button
                 onClick={() => setActiveTab('backend')}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-bold border transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs sm:text-sm font-bold border transition-all cursor-pointer ${
                   activeTab === 'backend'
                     ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
                     : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 hover:bg-emerald-100'
@@ -276,18 +276,18 @@ export const Header: React.FC<HeaderProps> = ({
             ) : (
               <button
                 onClick={onOpenAdminLogin}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-blue-500 text-slate-700 dark:text-slate-300 hover:text-blue-600 text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-blue-500 text-slate-700 dark:text-slate-300 hover:text-blue-600 text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
                 title={isAr ? 'دخول صاحب الموقع والمشرفين' : 'Admin Login'}
               >
                 <Lock className="w-3.5 h-3.5 text-slate-400" />
-                <span>{isAr ? 'دخول الإدارة' : 'Admin Login'}</span>
+                <span className="hidden sm:inline">{isAr ? 'دخول الإدارة' : 'Admin Login'}</span>
               </button>
             )}
 
             {/* Mobile Menu Button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 rounded-xl text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 lg:hidden cursor-pointer"
+              className="p-1.5 sm:p-2 rounded-xl text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 lg:hidden cursor-pointer"
               aria-label="Toggle Menu"
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}

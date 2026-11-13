@@ -39,7 +39,7 @@ export const AboutView: React.FC<AboutViewProps> = ({
       />
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-8 sm:p-14 border border-indigo-900/40 shadow-2xl">
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-5 sm:p-14 border border-indigo-900/40 shadow-2xl">
         <div className="absolute -top-24 -end-24 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-24 -start-24 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -49,7 +49,7 @@ export const AboutView: React.FC<AboutViewProps> = ({
             <span>{isAr ? 'عن مدونة الفا للديكور والدهانات' : 'About Alpha Decor & Paints'}</span>
           </div>
 
-          <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight">
+          <h1 className="text-2xl sm:text-5xl font-black tracking-tight leading-tight">
             {isAr ? (
               <>
                 المنصة الرائدة في <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-300 to-amber-300">عالم الديكور والتشطيبات الفاخرة</span>
@@ -96,7 +96,7 @@ export const AboutView: React.FC<AboutViewProps> = ({
 
 
       {/* Founder & Leadership Section */}
-      <section className="bg-white dark:bg-slate-900 rounded-3xl p-8 sm:p-12 border border-slate-200 dark:border-slate-800 shadow-sm">
+      <section className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-12 border border-slate-200 dark:border-slate-800 shadow-sm">
         <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center gap-8 md:gap-12">
           {/* Founder Monogram Visual */}
           <div className="shrink-0 flex flex-col items-center text-center">
@@ -191,7 +191,7 @@ export const AboutView: React.FC<AboutViewProps> = ({
       </section>
 
       {/* Blog Key Metrics */}
-      <section className="p-8 rounded-3xl bg-gradient-to-r from-blue-900/10 via-indigo-900/10 to-violet-900/10 border border-blue-200 dark:border-blue-900/50">
+      <section className="p-5 sm:p-8 rounded-3xl bg-gradient-to-r from-blue-900/10 via-indigo-900/10 to-violet-900/10 border border-blue-200 dark:border-blue-900/50">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 text-center">
           <div>
             <div className="text-2xl sm:text-4xl font-black text-blue-600 dark:text-blue-400">

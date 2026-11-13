@@ -299,7 +299,7 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
   };
 
   return (
-    <article className="max-w-4xl mx-auto space-y-8 pb-20">
+    <article className="max-w-4xl mx-auto space-y-8 pb-20 min-w-0 w-full">
       {/* 1. Interactive Breadcrumb: Homepage > Category > Article Title */}
       <SubpageBreadcrumb
         isAr={isAr}
@@ -310,17 +310,17 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
       />
 
       {/* 2. Top Navigation Bar with Return to Homepage & Quick Tools */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 p-2.5 sm:p-3.5 rounded-2xl bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
         <button
           type="button"
           onClick={onBack}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
+          className="flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
         >
           <Home className="w-4 h-4" />
           <span>{isAr ? 'العودة للصفحة الرئيسية' : 'Back to Home'}</span>
         </button>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* TTS Screen Reader for the Blind Button */}
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('open-blind-screen-reader'))}
@@ -398,7 +398,7 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
             role={article?.author?.role || (article as any)?.authorRole || 'استشاري الديكور والتشطيبات'}
           />
 
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
             <span className="flex items-center gap-1">
               <Calendar className="w-3.5 h-3.5" />
               {new Date(article.publishedAt).toLocaleDateString(isAr ? 'ar-EG' : 'en-US', {
@@ -436,7 +436,7 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
       </div>
 
       {/* Article Body Content */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-12 border border-slate-200 dark:border-slate-800 shadow-xs">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-12 border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
         {/* Ad Slot 3: Article Top Smart Ad Banner (الثالث في أول المقالات) */}
         {settings.ads?.enabled && settings.ads.articleTop?.enabled && (
           <div className="pb-6">
@@ -448,7 +448,7 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
           </div>
         )}
 
-        <div className="space-y-4">
+        <div className="space-y-4 break-words">
           {renderFormattedContent(article.content)}
         </div>
 
@@ -472,7 +472,7 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
             {isAr ? 'شارك المقال مع أصدقائك:' : 'Share this article:'}
           </span>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <a
               href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(article.title)}&url=${encodeURIComponent(window.location.href)}`}
               target="_blank"
@@ -520,7 +520,7 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
             {/* Dedicated Share Button */}
             <button
               onClick={() => setIsBroadcastModalOpen(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-blue-500/20 transition-all ms-2"
+              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-blue-500/20 transition-all sm:ms-2"
               title={isAr ? 'مشاركة رابط المقال' : 'Share Article Link'}
             >
               <Share2 className="w-3.5 h-3.5 text-white" />
@@ -607,7 +607,7 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
       <HadaryCoinFollowWidget variant="hero" ownerName={settings.authorName} isAr={isAr} />
 
       {/* Interactive Comments Section */}
-      <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-10 border border-slate-200 dark:border-slate-800 shadow-xs space-y-8">
+      <section className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-10 border border-slate-200 dark:border-slate-800 shadow-xs space-y-8">
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
           <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
             <MessageSquare className="w-5 h-5 text-blue-600" />

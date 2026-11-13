@@ -323,7 +323,7 @@ Looking forward to starting immediately!`;
   if (!isOpen) return null;
 
   return (
-    <div className="fixed bottom-4 end-4 z-50 w-[94vw] sm:w-[440px] h-[620px] max-h-[88vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 duration-300">
+    <div className="fixed bottom-2 end-2 sm:bottom-4 sm:end-4 z-50 w-[calc(100vw-1rem)] sm:w-[440px] max-w-full h-[620px] max-h-[88vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 duration-300">
       {/* Bot Window Header */}
       <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-violet-800 text-white p-4 flex items-center justify-between shadow-md">
         <div className="flex items-center gap-3">
