@@ -66,7 +66,12 @@ export default function App() {
   const [adminUser, setAdminUser] = useState<AdminUser | null>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_ADMIN);
-      if (stored) return JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object' && parsed.isLoggedIn && typeof parsed.email === 'string') {
+          return parsed as AdminUser;
+        }
+      }
     } catch (e) {
       console.warn('Failed to parse admin state:', e);
     }
@@ -154,11 +159,21 @@ export default function App() {
     const handleRouteSync = (isInitial: boolean = false) => {
       const pathname = window.location.pathname || '';
       const rawHash = window.location.hash.replace(/^#/, '').trim();
-      const decodedHash = decodeURIComponent(rawHash);
+      let decodedHash = rawHash;
+      try {
+        decodedHash = decodeURIComponent(rawHash);
+      } catch {
+        decodedHash = rawHash;
+      }
 
       // 1. Explicit direct deep-link to /article/:slug
       if (pathname.startsWith('/article/') && pathname.length > 9) {
-        const slug = decodeURIComponent(pathname.replace('/article/', '').trim());
+        let slug = pathname.replace('/article/', '').trim();
+        try {
+          slug = decodeURIComponent(slug);
+        } catch {
+          // Keep raw slug if malformed URI component
+        }
         if (slug) {
           const matched = articlesRef.current.find(
             (a) => a.slug === slug || a.id === slug || encodeURIComponent(a.slug) === slug
@@ -483,7 +498,9 @@ export default function App() {
     try {
       window.history.pushState(null, '', '/#backend');
     } catch (_) {}
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (_) {}
   };
 
   // Admin logout handler
@@ -816,26 +833,38 @@ export default function App() {
         }}
       />
 
-      {/* Admin Login Modal for Restricted Backend Access */}
-      <AdminLoginModal
-        isOpen={isAdminLoginOpen}
-        onClose={() => setIsAdminLoginOpen(false)}
-        onLoginSuccess={handleAdminLogin}
-        settings={settings}
-      />
+      {/* Admin Login Modal for Restricted Backend Access (Protected by dedicated ErrorBoundary) */}
+      <ErrorBoundary
+        isRtl={settings.language === 'ar'}
+        fallbackTitle={settings.language === 'ar' ? 'تعذر عرض نافذة تسجيل الدخول' : 'Login modal error'}
+        fallbackMessage={settings.language === 'ar' ? 'حدث خطأ مؤقت في نافذة المصادقة. اضغط «إعادة المحاولة» للمتابعة.' : 'A temporary error occurred in the login dialog.'}
+        onReset={() => setIsAdminLoginOpen(false)}
+      >
+        <AdminLoginModal
+          isOpen={isAdminLoginOpen}
+          onClose={() => setIsAdminLoginOpen(false)}
+          onLoginSuccess={handleAdminLogin}
+          settings={settings}
+        />
+      </ErrorBoundary>
 
       {/* Social Broadcast Modal from Quick Action */}
       {articleForShareModal && (
-        <SocialBroadcastModal
-          isOpen={true}
-          onClose={() => setArticleForShareModal(null)}
-          article={articleForShareModal}
-          settings={settings}
-          onBroadcastComplete={(item) => {
-            handleBroadcastComplete(item);
-            setArticleForShareModal(null);
-          }}
-        />
+        <ErrorBoundary
+          isRtl={settings.language === 'ar'}
+          onReset={() => setArticleForShareModal(null)}
+        >
+          <SocialBroadcastModal
+            isOpen={true}
+            onClose={() => setArticleForShareModal(null)}
+            article={articleForShareModal}
+            settings={settings}
+            onBroadcastComplete={(item) => {
+              handleBroadcastComplete(item);
+              setArticleForShareModal(null);
+            }}
+          />
+        </ErrorBoundary>
       )}
     </div>
   );

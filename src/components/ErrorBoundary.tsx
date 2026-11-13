@@ -34,12 +34,22 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     };
   }
 
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+  componentDidCatch(error: unknown, errorInfo: ErrorInfo) {
     // Sanitize and log error without exposing API keys, cookies, or user tokens
-    const sanitizedMsg = error.message ? error.message.replace(/([a-zA-Z0-9_-]{20,})/g, '[REDACTED]') : 'Unknown error';
-    console.error(`[Alpha ErrorBoundary ${this.state.errorId}] Sanitized caught error:`, sanitizedMsg, {
-      componentStack: errorInfo.componentStack?.slice(0, 500),
-    });
+    try {
+      const rawMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : String(error ?? 'Unknown error');
+      const sanitizedMsg = rawMessage.replace(/([a-zA-Z0-9_-]{20,})/g, '[REDACTED]');
+      console.error(`[Alpha ErrorBoundary ${this.state.errorId}] Sanitized caught error:`, sanitizedMsg, {
+        componentStack: errorInfo?.componentStack?.slice(0, 500),
+      });
+    } catch {
+      // Never allow logging inside ErrorBoundary to throw
+    }
   }
 
   handleRetry = () => {

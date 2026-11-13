@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Lock,
   ShieldCheck,
@@ -27,14 +27,25 @@ interface AdminLoginModalProps {
 
 const OFFICIAL_OWNER_EMAIL = 'mahmoudahmedhessien032@gmail.com';
 
+function toSafeText(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.message === 'string') return obj.message;
+    if (typeof obj.error === 'string') return obj.error;
+  }
+  return fallback;
+}
+
 export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   isOpen,
   onClose,
   onLoginSuccess,
   settings,
 }) => {
-  const isAr = settings.language === 'ar';
-  const ownerName = settings.authorName || 'الحضرى محمود';
+  const isAr = settings?.language !== 'en';
+  const ownerName = toSafeText(settings?.authorName, 'الحضرى محمود') || 'الحضرى محمود';
 
   const [mode, setMode] = useState<'login' | 'verifyCode' | 'changePassword'>('login');
   const [email, setEmail] = useState(OFFICIAL_OWNER_EMAIL);
@@ -46,7 +57,6 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const [otpCode, setOtpCode] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
   const [emailSent, setEmailSent] = useState(false);
-  const [deliveryMethod, setDeliveryMethod] = useState<string>('');
   const [previewCode, setPreviewCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
   const [copiedOtp, setCopiedOtp] = useState(false);
@@ -63,36 +73,80 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const [isResending, setIsResending] = useState(false);
   const [pendingUser, setPendingUser] = useState<AdminUser | null>(null);
 
+  const isMountedRef = useRef(true);
+  const otpInputRef = useRef<HTMLInputElement | null>(null);
+  const timersRef = useRef<number[]>([]);
+
+  const scheduleSafeTimeout = (fn: () => void, ms: number) => {
+    const id = window.setTimeout(() => {
+      if (isMountedRef.current) {
+        fn();
+      }
+    }, ms);
+    timersRef.current.push(id);
+    return id;
+  };
+
+  const clearPendingTimers = () => {
+    for (const id of timersRef.current) {
+      window.clearTimeout(id);
+    }
+    timersRef.current = [];
+  };
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      clearPendingTimers();
+    };
+  }, []);
+
   useEffect(() => {
     if (!isOpen) {
+      clearPendingTimers();
       setMode('login');
       setPassword('');
       setShowPassword(false);
       setChallengeId('');
       setOtpCode('');
+      setMaskedEmail('');
       setPreviewCode('');
       setEmailSent(false);
-      setDeliveryMethod('');
       setResendCooldown(0);
+      setCopiedOtp(false);
       setIsVerifying(false);
       setIsResending(false);
+      setPendingUser(null);
       setErrorMsg('');
       setSuccessMsg('');
     }
   }, [isOpen]);
 
   useEffect(() => {
+    if (!isOpen || mode !== 'verifyCode') return;
+    const focusTimer = window.setTimeout(() => {
+      try {
+        otpInputRef.current?.focus({ preventScroll: true });
+      } catch {
+        // Ignore focus errors inside restricted iframes
+      }
+    }, 60);
+    return () => window.clearTimeout(focusTimer);
+  }, [isOpen, mode]);
+
+  useEffect(() => {
     if (resendCooldown <= 0) return;
-    const timer = setInterval(() => {
+    const timer = window.setInterval(() => {
       setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);
-    return () => clearInterval(timer);
+    return () => window.clearInterval(timer);
   }, [resendCooldown]);
 
   if (!isOpen) return null;
 
   const postAuthJson = async (url: string, payload: Record<string, unknown>) => {
-    let lastError: any = null;
+    let lastError: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const response = await fetch(url, {
@@ -107,9 +161,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         });
 
         const rawText = await response.text();
-        let data: any = null;
+        let data: Record<string, unknown> | null = null;
         try {
-          data = rawText ? JSON.parse(rawText) : {};
+          const parsed = rawText ? JSON.parse(rawText) : {};
+          data = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
         } catch {
           data = null;
         }
@@ -120,7 +175,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         }
 
         return { ok: response.ok, status: response.status, data, rawText };
-      } catch (err: any) {
+      } catch (err) {
         lastError = err;
         if (attempt === 0) {
           await new Promise((r) => setTimeout(r, 450));
@@ -128,12 +183,17 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         }
       }
     }
-    throw lastError || new Error('Network error');
+    throw lastError instanceof Error ? lastError : new Error('Network error');
   };
 
   // Step 1: Verify Email + Password & Request Email OTP Code
   const handleStep1Login = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (isVerifying) return;
+
     setErrorMsg('');
     setSuccessMsg('');
 
@@ -160,8 +220,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         password: trimmedPassword,
       });
 
+      if (!isMountedRef.current) return;
+
       if (!ok || !data) {
-        const serverErr = data?.error || data?.message;
+        const serverErr = toSafeText(data?.error) || toSafeText(data?.message);
         setErrorMsg(
           serverErr ||
             (status >= 500
@@ -175,20 +237,24 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         return;
       }
 
-      if (data.requiresEmailCode && data.challengeId) {
-        setChallengeId(data.challengeId);
-        setMaskedEmail(data.maskedEmail || cleanEmail);
-        setEmailSent(Boolean(data.emailSent));
-        setDeliveryMethod(data.deliveryMethod || '');
-        setPreviewCode(data.previewCode || '');
+      const nextChallengeId = toSafeText(data.challengeId);
+      if (Boolean(data.requiresEmailCode) && nextChallengeId) {
+        const nextMaskedEmail = toSafeText(data.maskedEmail, cleanEmail) || cleanEmail;
+        const wasEmailSent = Boolean(data.emailSent);
+        const nextPreviewCode = toSafeText(data.previewCode);
+
+        setChallengeId(nextChallengeId);
+        setMaskedEmail(nextMaskedEmail);
+        setEmailSent(wasEmailSent);
+        setPreviewCode(nextPreviewCode);
         setOtpCode('');
         setResendCooldown(30);
         setMode('verifyCode');
         setSuccessMsg(
-          data.emailSent
+          wasEmailSent
             ? isAr
-              ? `تم إرسال كود تسجيل الدخول المكون من 6 أرقام إلى بريدك (${data.maskedEmail || cleanEmail}).`
-              : `A 6-digit login code has been sent to ${data.maskedEmail || cleanEmail}.`
+              ? `تم إرسال كود تسجيل الدخول المكون من 6 أرقام إلى بريدك (${nextMaskedEmail}).`
+              : `A 6-digit login code has been sent to ${nextMaskedEmail}.`
             : isAr
               ? 'تم التحقق من كلمة المرور بنجاح. أدخل كود التحقق المكون من 6 أرقام لإتمام الدخول.'
               : 'Password verified. Enter the 6-digit verification code to sign in.'
@@ -196,26 +262,40 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         return;
       }
 
+      const rawUser = (data.user && typeof data.user === 'object' ? data.user : {}) as Record<string, unknown>;
       const user: AdminUser = {
-        name: data.user?.name || ownerName,
-        role: data.user?.role || 'owner',
-        email: data.user?.email || OFFICIAL_OWNER_EMAIL,
+        name: toSafeText(rawUser.name, ownerName) || ownerName,
+        role: (rawUser.role === 'supervisor' ? 'supervisor' : 'owner'),
+        email: toSafeText(rawUser.email, OFFICIAL_OWNER_EMAIL) || OFFICIAL_OWNER_EMAIL,
         isLoggedIn: true,
-        mustChangePassword: Boolean(data.user?.mustChangePassword),
+        mustChangePassword: Boolean(rawUser.mustChangePassword),
       };
       onLoginSuccess(user);
       onClose();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Login step 1 error:', err);
-      setErrorMsg(isAr ? 'تعذر الاتصال بخادم المصادقة. يرجى التحقق من الاتصال وتحديث الصفحة ثم المحاولة مجدداً.' : 'Unable to connect to authentication server.');
+      if (isMountedRef.current) {
+        setErrorMsg(
+          isAr
+            ? 'تعذر الاتصال بخادم المصادقة. يرجى التحقق من الاتصال وتحديث الصفحة ثم المحاولة مجدداً.'
+            : 'Unable to connect to authentication server.'
+        );
+      }
     } finally {
-      setIsVerifying(false);
+      if (isMountedRef.current) {
+        setIsVerifying(false);
+      }
     }
   };
 
   // Step 2: Verify 6-Digit Email Code & Complete Sign-In
   const handleVerifyEmailCode = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (isVerifying) return;
+
     setErrorMsg('');
     setSuccessMsg('');
 
@@ -232,21 +312,24 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         code: cleanCode,
       });
 
+      if (!isMountedRef.current) return;
+
       if (!ok || !data) {
         setErrorMsg(
-          data?.error ||
-            data?.message ||
+          toSafeText(data?.error) ||
+            toSafeText(data?.message) ||
             (isAr ? `فشل التحقق من الكود (رمز ${status}).` : 'Invalid or expired verification code.')
         );
         return;
       }
 
+      const rawUser = (data.user && typeof data.user === 'object' ? data.user : {}) as Record<string, unknown>;
       const user: AdminUser = {
-        name: data.user?.name || ownerName,
-        role: data.user?.role || 'owner',
-        email: data.user?.email || OFFICIAL_OWNER_EMAIL,
+        name: toSafeText(rawUser.name, ownerName) || ownerName,
+        role: (rawUser.role === 'supervisor' ? 'supervisor' : 'owner'),
+        email: toSafeText(rawUser.email, OFFICIAL_OWNER_EMAIL) || OFFICIAL_OWNER_EMAIL,
         isLoggedIn: true,
-        mustChangePassword: Boolean(data.user?.mustChangePassword),
+        mustChangePassword: Boolean(rawUser.mustChangePassword),
       };
 
       if (user.mustChangePassword) {
@@ -258,15 +341,19 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
       }
 
       setSuccessMsg(isAr ? 'تم تأكيد الكود وتسجيل الدخول بنجاح إلى لوحة الإدارة!' : 'Verified and signed in successfully!');
-      setTimeout(() => {
+      scheduleSafeTimeout(() => {
         onLoginSuccess(user);
         onClose();
-      }, 350);
-    } catch (err: any) {
+      }, 250);
+    } catch (err) {
       console.error('Verify OTP error:', err);
-      setErrorMsg(isAr ? 'تعذر التحقق من الكود مع الخادم. يرجى المحاولة مجدداً.' : 'Failed to verify code.');
+      if (isMountedRef.current) {
+        setErrorMsg(isAr ? 'تعذر التحقق من الكود مع الخادم. يرجى المحاولة مجدداً.' : 'Failed to verify code.');
+      }
     } finally {
-      setIsVerifying(false);
+      if (isMountedRef.current) {
+        setIsVerifying(false);
+      }
     }
   };
 
@@ -279,37 +366,44 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
     try {
       const { ok, status, data } = await postAuthJson('/api/auth/login/resend-code', { challengeId });
+      if (!isMountedRef.current) return;
 
       if (!ok || !data) {
         setErrorMsg(
-          data?.error ||
-            data?.message ||
+          toSafeText(data?.error) ||
+            toSafeText(data?.message) ||
             (isAr ? `تعذر إعادة إرسال الكود (رمز ${status}).` : 'Failed to resend code.')
         );
         if (data?.retryAfterSeconds) {
-          setResendCooldown(Number(data.retryAfterSeconds));
+          const secs = Number(data.retryAfterSeconds);
+          if (Number.isFinite(secs) && secs > 0) setResendCooldown(secs);
         }
         return;
       }
 
-      setEmailSent(Boolean(data.emailSent));
-      setDeliveryMethod(data.deliveryMethod || '');
-      setPreviewCode(data.previewCode || '');
+      const wasEmailSent = Boolean(data.emailSent);
+      const nextMaskedEmail = toSafeText(data.maskedEmail, maskedEmail) || maskedEmail;
+      setEmailSent(wasEmailSent);
+      setPreviewCode(toSafeText(data.previewCode));
       setResendCooldown(30);
       setSuccessMsg(
-        data.emailSent
+        wasEmailSent
           ? isAr
-            ? `تمت إعادة إرسال كود تحقق جديد إلى (${data.maskedEmail || maskedEmail}).`
-            : `A new verification code was sent to ${data.maskedEmail || maskedEmail}.`
+            ? `تمت إعادة إرسال كود تحقق جديد إلى (${nextMaskedEmail}).`
+            : `A new verification code was sent to ${nextMaskedEmail}.`
           : isAr
             ? 'تم توليد كود تحقق جديد بنجاح.'
             : 'Generated a new verification code.'
       );
-    } catch (err: any) {
+    } catch (err) {
       console.error('Resend OTP error:', err);
-      setErrorMsg(isAr ? 'تعذر الاتصال بالخادم لإعادة إرسال الكود.' : 'Failed to resend code.');
+      if (isMountedRef.current) {
+        setErrorMsg(isAr ? 'تعذر الاتصال بالخادم لإعادة إرسال الكود.' : 'Failed to resend code.');
+      }
     } finally {
-      setIsResending(false);
+      if (isMountedRef.current) {
+        setIsResending(false);
+      }
     }
   };
 
@@ -317,16 +411,23 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     if (!previewCode) return;
     setOtpCode(previewCode);
     try {
-      navigator.clipboard.writeText(previewCode);
+      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        void navigator.clipboard.writeText(previewCode).catch(() => {});
+      }
       setCopiedOtp(true);
-      setTimeout(() => setCopiedOtp(false), 2000);
+      scheduleSafeTimeout(() => setCopiedOtp(false), 2000);
     } catch {
       // Ignore clipboard failure
     }
   };
 
   const handleChangePassword = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (isVerifying) return;
+
     setErrorMsg('');
     setSuccessMsg('');
 
@@ -356,33 +457,56 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         newPassword: trimmedNew,
       });
 
+      if (!isMountedRef.current) return;
+
       if (!ok || !data) {
         setErrorMsg(
-          data?.error ||
-            data?.message ||
+          toSafeText(data?.error) ||
+            toSafeText(data?.message) ||
             (isAr ? `فشل تغيير كلمة المرور (رمز ${status}).` : 'Failed to change password.')
         );
         return;
       }
 
       setSuccessMsg(isAr ? 'تم تغيير كلمة المرور بنجاح وحفظها مشفرة في قاعدة البيانات.' : 'Password updated successfully.');
-      setTimeout(() => {
+      scheduleSafeTimeout(() => {
         if (pendingUser) {
           onLoginSuccess({ ...pendingUser, mustChangePassword: false });
         }
         onClose();
-      }, 1000);
-    } catch (err: any) {
+      }, 600);
+    } catch (err) {
       console.error('Change password failed:', err);
-      setErrorMsg(isAr ? 'تعذر الاتصال بالخادم.' : 'Server connection failed.');
+      if (isMountedRef.current) {
+        setErrorMsg(isAr ? 'تعذر الاتصال بالخادم.' : 'Server connection failed.');
+      }
     } finally {
-      setIsVerifying(false);
+      if (isMountedRef.current) {
+        setIsVerifying(false);
+      }
     }
   };
 
+  const modalTitleText =
+    mode === 'verifyCode'
+      ? isAr
+        ? 'تأكيد كود الدخول عبر الإيميل'
+        : 'Verify Email Login Code'
+      : mode === 'changePassword'
+        ? isAr
+          ? 'تغيير كلمة المرور وتحديث الأمان'
+          : 'Update Admin Password'
+        : isAr
+          ? 'بوابة دخول المالك المشفرة'
+          : 'Secure Owner Portal';
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full max-h-[92vh] overflow-y-auto border border-slate-200 dark:border-slate-800 shadow-2xl animate-in zoom-in-95 duration-200">
+    <div
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full max-h-[92vh] overflow-y-auto border border-slate-200 dark:border-slate-800 shadow-2xl">
         {/* Header */}
         <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-5 sm:p-6 relative">
           <button
@@ -396,16 +520,20 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
           <div className="flex items-center gap-3 pe-8">
             <div className="w-12 h-12 rounded-2xl bg-blue-600/30 border border-blue-400/30 text-blue-300 flex items-center justify-center shrink-0">
-              {mode === 'verifyCode' ? <Mail className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
+              {mode === 'verifyCode' ? (
+                <span key="header-icon-mail" className="inline-flex">
+                  <Mail className="w-6 h-6" />
+                </span>
+              ) : (
+                <span key="header-icon-lock" className="inline-flex">
+                  <Lock className="w-6 h-6" />
+                </span>
+              )}
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="font-bold text-base">
-                  {mode === 'verifyCode'
-                    ? (isAr ? 'تأكيد كود الدخول عبر الإيميل' : 'Verify Email Login Code')
-                    : mode === 'changePassword'
-                      ? (isAr ? 'تغيير كلمة المرور وتحديث الأمان' : 'Update Admin Password')
-                      : (isAr ? 'بوابة دخول المالك المشفرة' : 'Secure Owner Portal')}
+                  <span key={`header-title-${mode}`}>{modalTitleText}</span>
                 </h3>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">
                   {isAr ? 'تحقق مزدوج' : '2-Step Auth'}
@@ -443,20 +571,21 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           </div>
 
           {mode === 'login' && (
-            <form onSubmit={handleStep1Login} className="space-y-4">
+            <form key="form-step1-login" noValidate onSubmit={handleStep1Login} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
                   {isAr ? 'البريد الإلكتروني المعتمد:' : 'Authorized Email:'}
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 absolute start-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Mail className="w-4 h-4 absolute start-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                   <input
                     type="email"
+                    name="email"
+                    autoComplete="username"
                     dir="ltr"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder={OFFICIAL_OWNER_EMAIL}
-                    required
                     className="w-full ps-10 pe-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                   />
                 </div>
@@ -467,23 +596,32 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   {isAr ? 'كلمة المرور:' : 'Password:'}
                 </label>
                 <div className="relative">
-                  <KeyRound className="w-4 h-4 absolute start-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <KeyRound className="w-4 h-4 absolute start-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                   <input
                     type={showPassword ? 'text' : 'password'}
+                    name="password"
+                    autoComplete="current-password"
                     dir="ltr"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder={isAr ? 'أدخل كلمة مرور المالك...' : 'Enter owner password...'}
-                    required
                     className="w-full ps-10 pe-10 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
+                    onClick={() => setShowPassword((prev) => !prev)}
                     aria-label={isAr ? 'إظهار أو إخفاء كلمة المرور' : 'Toggle password visibility'}
                     className="absolute end-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showPassword ? (
+                      <span key="pw-eye-off" className="inline-flex">
+                        <EyeOff className="w-4 h-4" />
+                      </span>
+                    ) : (
+                      <span key="pw-eye" className="inline-flex">
+                        <Eye className="w-4 h-4" />
+                      </span>
+                    )}
                   </button>
                 </div>
               </div>
@@ -494,15 +632,15 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isVerifying ? (
-                  <>
+                  <span key="step1-btn-loading" className="inline-flex items-center justify-center gap-2">
                     <RefreshCw className="w-4 h-4 animate-spin" />
                     <span>{isAr ? 'جارٍ التحقق وإرسال الكود...' : 'Verifying & sending code...'}</span>
-                  </>
+                  </span>
                 ) : (
-                  <>
+                  <span key="step1-btn-idle" className="inline-flex items-center justify-center gap-2">
                     <Send className="w-4 h-4" />
                     <span>{isAr ? 'التحقق وإرسال كود الدخول عبر الإيميل' : 'Verify & Send Email Code'}</span>
-                  </>
+                  </span>
                 )}
               </button>
 
@@ -515,7 +653,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           )}
 
           {mode === 'verifyCode' && (
-            <form onSubmit={handleVerifyEmailCode} className="space-y-4 animate-in fade-in duration-150">
+            <form key="form-step2-verify" noValidate onSubmit={handleVerifyEmailCode} className="space-y-4">
               <div
                 className={`p-3.5 rounded-2xl border text-xs leading-relaxed ${
                   emailSent
@@ -524,13 +662,13 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 }`}
               >
                 {emailSent ? (
-                  <p>
+                  <p key="otp-sent-msg">
                     {isAr
                       ? `تم إرسال رسالة تحتوي على كود من 6 أرقام إلى البريد (${maskedEmail}). يرجى فتح البريد وإدخال الكود أدناه خلال 10 دقائق.`
                       : `A 6-digit code was sent to ${maskedEmail}. Enter it below within 10 minutes.`}
                   </p>
                 ) : (
-                  <div className="space-y-2">
+                  <div key="otp-preview-box" className="space-y-2">
                     <p>
                       {isAr
                         ? 'تم تأكيد كلمة المرور بنجاح، لكن إعدادات إرسال البريد الخارجي (SMTP / GMAIL_APP_PASSWORD) غير مضافة حالياً لمتغيرات الخادم. يمكنك استخدام كود التحقق المباشر لهذه الجلسة أدناه:'
@@ -549,8 +687,17 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                           onClick={handleCopyPreviewCode}
                           className="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
                         >
-                          {copiedOtp ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                          <span>{copiedOtp ? (isAr ? 'تم التعبئة' : 'Filled') : (isAr ? 'تعبئة الكود' : 'Use Code')}</span>
+                          {copiedOtp ? (
+                            <span key="copy-done" className="inline-flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5" />
+                              <span>{isAr ? 'تم التعبئة' : 'Filled'}</span>
+                            </span>
+                          ) : (
+                            <span key="copy-idle" className="inline-flex items-center gap-1.5">
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>{isAr ? 'تعبئة الكود' : 'Use Code'}</span>
+                            </span>
+                          )}
                         </button>
                       </div>
                     )}
@@ -563,15 +710,16 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   {isAr ? 'أدخل كود التحقق (6 أرقام):' : 'Verification Code (6 digits):'}
                 </label>
                 <input
+                  ref={otpInputRef}
                   type="text"
+                  name="otp"
+                  autoComplete="one-time-code"
                   inputMode="numeric"
                   dir="ltr"
                   maxLength={6}
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value.replace(/[^\d]/g, '').slice(0, 6))}
                   placeholder="000000"
-                  required
-                  autoFocus
                   className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-center font-mono text-xl font-black tracking-[0.45em] focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                 />
               </div>
@@ -582,15 +730,15 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 className="w-full py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isVerifying ? (
-                  <>
+                  <span key="step2-btn-loading" className="inline-flex items-center justify-center gap-2">
                     <RefreshCw className="w-4 h-4 animate-spin" />
                     <span>{isAr ? 'جارٍ تأكيد الكود...' : 'Verifying code...'}</span>
-                  </>
+                  </span>
                 ) : (
-                  <>
+                  <span key="step2-btn-idle" className="inline-flex items-center justify-center gap-2">
                     <ShieldCheck className="w-4 h-4" />
                     <span>{isAr ? 'تأكيد كود الدخول والمتابعة' : 'Confirm Code & Sign In'}</span>
-                  </>
+                  </span>
                 )}
               </button>
 
@@ -602,11 +750,13 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   className="text-blue-600 dark:text-blue-400 hover:underline disabled:text-slate-400 disabled:no-underline font-semibold flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isResending ? 'animate-spin' : ''}`} />
-                  <span>
-                    {resendCooldown > 0
-                      ? (isAr ? `إعادة إرسال الكود (${resendCooldown}ث)` : `Resend (${resendCooldown}s)`)
-                      : (isAr ? 'إعادة إرسال الكود' : 'Resend Code')}
-                  </span>
+                  {resendCooldown > 0 ? (
+                    <span key="resend-cooldown">
+                      {isAr ? `إعادة إرسال الكود (${resendCooldown}ث)` : `Resend (${resendCooldown}s)`}
+                    </span>
+                  ) : (
+                    <span key="resend-ready">{isAr ? 'إعادة إرسال الكود' : 'Resend Code'}</span>
+                  )}
                 </button>
 
                 <button
@@ -627,17 +777,17 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           )}
 
           {mode === 'changePassword' && (
-            <form onSubmit={handleChangePassword} className="space-y-4">
+            <form key="form-step3-change-pw" noValidate onSubmit={handleChangePassword} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
                   {isAr ? 'كلمة المرور الحالية:' : 'Current Password:'}
                 </label>
                 <input
                   type="password"
+                  autoComplete="current-password"
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
                   placeholder={isAr ? 'كلمة المرور الحالية...' : 'Current password...'}
-                  required
                   className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                 />
               </div>
@@ -648,10 +798,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder={isAr ? 'أدخل كلمة مرور جديدة قوية...' : 'Enter new strong password...'}
-                  required
                   className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                 />
               </div>
@@ -662,10 +812,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder={isAr ? 'أعد إدخال كلمة المرور الجديدة...' : 'Re-enter new password...'}
-                  required
                   className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                 />
               </div>
@@ -677,12 +827,14 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   className="flex-1 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   {isVerifying ? (
-                    <span>{isAr ? 'جارِ الحفظ والتشفير...' : 'Saving...'}</span>
+                    <span key="pw-saving" className="inline-flex items-center justify-center gap-2">
+                      <span>{isAr ? 'جارِ الحفظ والتشفير...' : 'Saving...'}</span>
+                    </span>
                   ) : (
-                    <>
+                    <span key="pw-save-idle" className="inline-flex items-center justify-center gap-2">
                       <RefreshCw className="w-4 h-4" />
                       <span>{isAr ? 'حفظ كلمة المرور الجديدة' : 'Save New Password'}</span>
-                    </>
+                    </span>
                   )}
                 </button>
 
@@ -704,14 +856,20 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
           {/* Feedback messages */}
           {errorMsg && (
-            <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 text-xs flex items-center gap-2 animate-in fade-in">
+            <div
+              key="login-error-banner"
+              className="p-3 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 text-xs flex items-center gap-2"
+            >
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{errorMsg}</span>
             </div>
           )}
 
           {successMsg && (
-            <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
+            <div
+              key="login-success-banner"
+              className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-300 text-xs flex items-center gap-2"
+            >
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>{successMsg}</span>
             </div>

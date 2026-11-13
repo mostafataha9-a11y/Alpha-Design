@@ -228,11 +228,11 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
     triggerToast(isAr ? `تمت إضافة المشرف «${newSupervisorName}» مع تفعيل تسجيل الدخول بحساب Google!` : 'Supervisor added with Google Sign-In!');
   };
 
-  const isOwner = currentUser.role === 'owner' || currentUser.email === 'mahmoudahmedhessien032@gmail.com';
+  const isOwner = currentUser?.role === 'owner' || currentUser?.email === 'mahmoudahmedhessien032@gmail.com';
 
   // Supervisor security permission: strictly restricted to owner unless explicitly authorized
   const currentSup = supervisors.find(
-    (s) => s.email === currentUser.email || s.googleEmail === currentUser.email || s.name === currentUser.name
+    (s) => s.email === currentUser?.email || s.googleEmail === currentUser?.email || s.name === currentUser?.name
   );
   const hasSecurityPermission = isOwner || !!currentSup?.canManageAdminSecurity;
 
@@ -305,8 +305,8 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
             </div>
             <p className="text-xs text-slate-400">
               {isAr
-                ? `مرحباً، ${currentUser.name} (${currentUser.role === 'owner' ? 'صاحب المدونة' : 'مشرف معتمد'}) | صفحات الإدارة محجوبة عن الزوار`
-                : `Logged in as ${currentUser.name} | Confidential back-office view`}
+                ? `مرحباً، ${currentUser?.name || ownerName} (${currentUser?.role === 'owner' ? 'صاحب المدونة' : 'مشرف معتمد'}) | صفحات الإدارة محجوبة عن الزوار`
+                : `Logged in as ${currentUser?.name || ownerName} | Confidential back-office view`}
             </p>
           </div>
         </div>
@@ -570,7 +570,7 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
               </div>
 
               {/* Broadcast History */}
-              {settings.socialBroadcast.history && settings.socialBroadcast.history.length > 0 && (
+              {settings.socialBroadcast?.history && settings.socialBroadcast.history.length > 0 && (
                 <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-3">
                   <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">
                     {isAr ? 'سجل المنشورات التي تم بثها:' : 'Recent Broadcast Logs:'}

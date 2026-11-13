@@ -22,14 +22,17 @@ export const AuthorBadge: React.FC<AuthorBadgeProps> = ({
   prefix,
   className = '',
 }) => {
-  // Sanitize name: completely strip any bot or auto-publish engine titles from reader-facing views
-  const displayName = (!name || /محرك|نشر|بوت|bot|publisher|مصطفى/i.test(name))
-    ? 'الحضرى محمود'
-    : name;
+  const safeName = typeof name === 'string' ? name : String(name ?? '');
+  const safeRole = typeof role === 'string' ? role : role ? String(role) : undefined;
 
-  const displayRole = (role && /محرك|نشر|بوت|bot|publisher/i.test(role))
+  // Sanitize name: completely strip any bot or auto-publish engine titles from reader-facing views
+  const displayName = (!safeName || /محرك|نشر|بوت|bot|publisher|مصطفى/i.test(safeName))
+    ? 'الحضرى محمود'
+    : safeName;
+
+  const displayRole = (safeRole && /محرك|نشر|بوت|bot|publisher/i.test(safeRole))
     ? 'صاحب الموقع ومؤسس المدونة'
-    : role;
+    : safeRole;
 
   // Extract initials from name e.g. "الحضرى محمود" -> "ح م"
   const getInitials = (n: string) => {
