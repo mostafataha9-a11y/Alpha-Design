@@ -172,7 +172,7 @@ async function runStagingReadinessSuite() {
     const testUser = {
       uid: 'owner-hadary-1',
       name: 'الحضرى محمود',
-      email: 'hadary@alphadecor.blog',
+      email: 'mahmoudahmedhessien032@gmail.com',
       role: 'owner',
       mustChangePassword: false,
     };
@@ -185,12 +185,19 @@ async function runStagingReadinessSuite() {
       'الجلسة الدائمة مسترجعة بنجاح من جدول admin_sessions في PostgreSQL'
     );
 
-    // Login to server to obtain authenticated session
-    const serverLogin = await httpRequest({
+    // Login to server (Step 1 + Step 2 OTP) to obtain authenticated session
+    const step1Login = await httpRequest({
       path: '/api/auth/login',
       method: 'POST',
-      body: { username: 'الحضرى محمود', password: process.env.ADMIN_PASSWORD || '#%5rU)2;-YHZzL"' },
+      body: { email: 'mahmoudahmedhessien032@gmail.com', password: process.env.ADMIN_PASSWORD || 'A7p#D9s!mK2$vL8@' },
     });
+    const serverLogin = step1Login.body?.challengeId && step1Login.body?.previewCode
+      ? await httpRequest({
+          path: '/api/auth/login/verify-code',
+          method: 'POST',
+          body: { challengeId: step1Login.body.challengeId, code: step1Login.body.previewCode },
+        })
+      : step1Login;
     const setCookie = serverLogin.headers['set-cookie'];
     const sessionCookie = Array.isArray(setCookie) ? setCookie[0] : (setCookie || '');
 

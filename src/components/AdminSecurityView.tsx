@@ -373,22 +373,16 @@ export const AdminSecurityView: React.FC<AdminSecurityViewProps> = ({
           {/* Current Email Info Box */}
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2">
             <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">
-              {isAr ? 'بريد الدخول الرسمي الحالي عبر Google:' : 'Current Google Sign-in Email:'}
+              {isAr ? 'بريد الدخول الرسمي الحالي للمالك:' : 'Official Owner Sign-in Email:'}
             </span>
             <div className="flex items-center gap-2 text-sm font-black text-blue-600 dark:text-blue-400 bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-blue-200 dark:border-blue-900">
-              {/* Google G Icon */}
-              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-              </svg>
-              <span className="font-mono">{adminEmail}</span>
+              <Mail className="w-4 h-4 shrink-0 text-blue-500" />
+              <span className="font-mono" dir="ltr">{adminEmail}</span>
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
               {isAr
-                ? 'يمكنك تسجيل الدخول فوراً بضغطة زر واحدة دون طلب أي كلمة مرور عبر حساب Google أعلاه.'
-                : '1-click sign-in without password is ready with this Google email.'}
+                ? 'يتم تسجيل الدخول باستخدام البريد المعتمد وكلمة المرور مع إرسال كود تحقق مكون من 6 أرقام عبر البريد الإلكتروني.'
+                : 'Sign-in uses this email, password, and a 6-digit email verification code.'}
             </p>
           </div>
 
@@ -428,7 +422,7 @@ export const AdminSecurityView: React.FC<AdminSecurityViewProps> = ({
           </form>
         </div>
 
-        {/* CARD 2: PASSWORD MANAGEMENT & PASSWORDLESS MODE (إلغاء كلمة المرور أو تحديثها) */}
+        {/* CARD 2: PASSWORD MANAGEMENT & EMAIL OTP SECURITY */}
         <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-5">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
             <div className="flex items-center gap-3">
@@ -440,25 +434,25 @@ export const AdminSecurityView: React.FC<AdminSecurityViewProps> = ({
                   {isAr ? 'إدارة كلمة المرور ونظام الدخول' : 'Password & Sign-In Mode'}
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {isAr ? 'إلغاء كلمة المرور أو تعيين رمز احتياطي' : 'Toggle passwordless or update backup password'}
+                  {isAr ? 'كلمة المرور المشفرة + كود البريد الإلكتروني' : 'Encrypted password + Email OTP'}
                 </p>
               </div>
             </div>
             <span className="px-2.5 py-1 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-xs font-bold">
-              {isAr ? 'مصادقة Google الرسمية' : 'Google OAuth Protected'}
+              {isAr ? 'تحقق مزدوج بالبريد' : 'Email OTP Protected'}
             </span>
           </div>
 
-          {/* Google OAuth Protection Notice */}
+          {/* Email + Password + OTP Protection Notice */}
           <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/20 border border-blue-200 dark:border-blue-900/60 space-y-2">
             <div className="flex items-center gap-2 text-blue-800 dark:text-blue-300 font-bold text-xs">
               <ShieldCheck className="w-4 h-4 text-blue-600" />
-              <span>{isAr ? 'تسجيل الدخول مؤمن بحساب Google الرسمي للمالك' : 'Secured via Official Google Owner Account'}</span>
+              <span>{isAr ? 'تسجيل الدخول مؤمن بالبريد وكلمة المرور وكود التحقق' : 'Secured via Email, Password & OTP'}</span>
             </div>
             <p className="text-[11px] text-blue-900/80 dark:text-blue-200/80 leading-relaxed">
               {isAr
-                ? 'لوحة الإدارة مربوطة ومحمية حصراً بحساب Google المعتمد (mahmoudahmedhessien032@gmail.com). لا يُسمح بأي دخول مباشر بدون التحقق من حساب المالك. يمكنك أيضاً تعيين أو تحديث كلمة مرور احتياطية مشفرة أدناه.'
-                : 'The admin dashboard is strictly restricted to the official Google account (mahmoudahmedhessien032@gmail.com). Direct bypass is completely disabled.'}
+                ? 'تم إلغاء الدخول عبر Google والدخول المباشر. يتم تسجيل الدخول حصراً ببريد المالك (mahmoudahmedhessien032@gmail.com) وكلمة المرور المعتمدة مع إرسال كود تحقق عبر البريد الإلكتروني.'
+                : 'Google Sign-In and passwordless bypass are disabled. Login requires owner email (mahmoudahmedhessien032@gmail.com), password, and an email OTP code.'}
             </p>
           </div>
 
@@ -466,7 +460,7 @@ export const AdminSecurityView: React.FC<AdminSecurityViewProps> = ({
           <form onSubmit={handleSavePassword} className="space-y-3">
             <div>
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                {isAr ? 'تعيين / تغيير كلمة المرور الاحتياطية:' : 'Set / Update Backup Password:'}
+                {isAr ? 'تعيين / تغيير كلمة مرور المالك:' : 'Set / Update Owner Password:'}
               </label>
               <div className="relative">
                 <KeyRound className="w-4 h-4 text-slate-400 absolute start-3.5 top-1/2 -translate-y-1/2" />

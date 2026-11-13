@@ -100,11 +100,15 @@ async function runExecutiveOrder4Suite() {
   // 1. Admin Credentials Verification
   console.log('--- 1. التحقق من هوية وبيانات اعتماد المسؤول المعتمد ورصد حظر البريد السابق ---');
   const adminEmail = 'mahmoudahmedhessien032@gmail.com';
-  const adminPass = '#%5rU)2;-YHZzL"';
+  const adminPass = 'A7p#D9s!mK2$vL8@';
   const credsCheck = await verifyOwnerCredentials(adminPass, adminEmail);
   assert(credsCheck.valid === true, 'بيانات اعتماد المالك المعتمد (mahmoudahmedhessien032@gmail.com) صالحة ومطابقة');
   assert(credsCheck.user?.email === adminEmail, 'البريد الإلكتروني المسترجع يطابق mahmoudahmedhessien032@gmail.com بدقة');
   assert(credsCheck.user?.mustChangePassword === false, 'حالة mustChangePassword مضبوطة على false للمسؤول');
+
+  // Verify old password is rejected
+  const legacyPassCheck = await verifyOwnerCredentials('#%5rU)2;-YHZzL"', adminEmail);
+  assert(legacyPassCheck.valid === false, 'تم رفض كلمة المرور القديمة بعد اعتماد كلمة المرور الجديدة');
 
   // Verify mostafa.taha9 is blocked
   const blockedCheck = await verifyGoogleAuth('mostafa.taha9@gmail.com');
@@ -115,28 +119,56 @@ async function runExecutiveOrder4Suite() {
   assert(nameCredsCheck.valid === true, 'تسجيل الدخول باسم صاحب الموقع (الحضرى محمود) ينجح ومطابق في قاعدة البيانات');
   assert(nameCredsCheck.user?.name === 'الحضرى محمود', 'الاسم المسترجع يطابق صاحب الموقع الحضرى محمود');
 
-  // 2. Cookie-based Login API
-  console.log('\n--- 2. فحص مسار تسجيل الدخول وحجب التوكن من الـ JSON واستخدام Cookie HttpOnly ---');
-  // 2.1 Test with new owner name 'الحضرى محمود'
-  const loginNameRes = await httpRequest({
-    path: '/api/auth/login',
+  // 2. Two-Step Email OTP Login API & HttpOnly Cookie
+  console.log('\n--- 2. فحص مسار تسجيل الدخول بكلمة المرور وكود التحقق عبر البريد واستخدام Cookie HttpOnly ---');
+  // 2.1 Verify Google Auth endpoint is disabled (410)
+  const disabledGoogleRes = await httpRequest({
+    path: '/api/auth/google',
     method: 'POST',
-    body: { username: 'الحضرى محمود', password: adminPass },
+    body: { email: adminEmail },
   });
-  assert(loginNameRes.status === 200, 'تسجيل الدخول عبر API باسم (الحضرى محمود) ينجح برمز 200 OK');
-  assert(loginNameRes.body?.success === true, 'استجابة تسجيل الدخول باسم الحضرى محمود تشير لنجاح العملية');
+  assert(disabledGoogleRes.status === 410, 'تم إلغاء مسار تسجيل الدخول عبر Google (/api/auth/google -> 410)');
 
-  // 2.2 Test with developer email
-  const loginRes = await httpRequest({
+  // 2.2 Verify unauthenticated emergency-key request is blocked (401)
+  const unauthEmergencyRes = await httpRequest({
+    path: '/api/auth/2fa/emergency-key/request',
+    method: 'POST',
+    body: { email: adminEmail },
+  });
+  assert(unauthEmergencyRes.status === 401, 'حماية مسار مفتاح الطوارئ من الوصول غير المصادق عليه (401)');
+
+  // 2.3 Step 1 login issues OTP challenge without setting session cookie yet
+  const step1Res = await httpRequest({
     path: '/api/auth/login',
     method: 'POST',
     body: { email: adminEmail, password: adminPass },
   });
-  assert(loginRes.status === 200, 'تسجيل الدخول بالبريد ينجح برمز 200 OK');
-  assert(loginRes.body?.success === true, 'استجابة تسجيل الدخول تشير لنجاح العملية');
-  assert(loginRes.body?.token === undefined, 'عدم تسريب توكن الجلسة داخل جسم استجابة الـ JSON');
-  
-  const setCookieHeader = loginRes.headers['set-cookie'];
+  assert(step1Res.status === 200, 'الخطوة الأولى (البريد + كلمة المرور) تنجح برمز 200 OK');
+  assert(step1Res.body?.requiresEmailCode === true && Boolean(step1Res.body?.challengeId), 'إصدار تحدي كود التحقق عبر البريد الإلكتروني');
+  assert(!step1Res.headers['set-cookie'], 'عدم إصدار كوكي الجلسة قبل إدخال كود التحقق البريدي');
+
+  // 2.4 Reject invalid 6-digit OTP code
+  const badOtpRes = await httpRequest({
+    path: '/api/auth/login/verify-code',
+    method: 'POST',
+    body: { challengeId: step1Res.body.challengeId, code: '000000' },
+  });
+  assert(badOtpRes.status === 401, 'رفض كود التحقق الخاطئ برمز 401 Unauthorized');
+
+  // 2.5 Verify valid OTP code issues HttpOnly session cookie
+  const otpCode = step1Res.body?.previewCode;
+  assert(typeof otpCode === 'string' && /^\d{6}$/.test(otpCode), 'كود التحقق المولد مكون من 6 أرقام صحيحة');
+
+  const verifyOtpRes = await httpRequest({
+    path: '/api/auth/login/verify-code',
+    method: 'POST',
+    body: { challengeId: step1Res.body.challengeId, code: otpCode },
+  });
+  assert(verifyOtpRes.status === 200, 'تأكيد كود التحقق البريدي ينجح برمز 200 OK');
+  assert(verifyOtpRes.body?.success === true, 'استجابة تأكيد كود البريد تشير لنجاح العملية');
+  assert(verifyOtpRes.body?.token === undefined, 'عدم تسريب توكن الجلسة داخل جسم استجابة الـ JSON');
+
+  const setCookieHeader = verifyOtpRes.headers['set-cookie'];
   assert(Array.isArray(setCookieHeader) && setCookieHeader.some(c => c.includes('alpha_session')), 'تعيين كوكي الجلسة alpha_session في الترويسات');
   const sessionCookie = (setCookieHeader || []).find(c => c.includes('alpha_session')) || '';
   assert(sessionCookie.includes('HttpOnly'), 'الكوكي مشفر ومحمي بخاصية HttpOnly لمنع قراءته عبر JavaScript');

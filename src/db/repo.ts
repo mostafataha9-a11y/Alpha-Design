@@ -175,11 +175,12 @@ export async function seedInitialDataIfEmpty() {
 
   try {
     // 1. Seed or sanitize admin owner user
+    const approvedDefaultPassword = process.env.ADMIN_PASSWORD || 'A7p#D9s!mK2$vL8@';
+    const legacyDefaultPassword = '#%5rU)2;-YHZzL"';
     const existingUsers = await db.select().from(users).where(eq(users.role, 'owner')).limit(1);
     if (existingUsers.length === 0) {
-      const initialPassword = process.env.ADMIN_PASSWORD || '#%5rU)2;-YHZzL"';
       const salt = await bcrypt.genSalt(12);
-      const passwordHash = await bcrypt.hash(initialPassword, salt);
+      const passwordHash = await bcrypt.hash(approvedDefaultPassword, salt);
 
       await db.insert(users).values({
         uid: 'owner-hadary-1',
@@ -191,12 +192,22 @@ export async function seedInitialDataIfEmpty() {
       });
     } else {
       const owner = existingUsers[0];
+      const updateFields: Record<string, any> = {
+        name: 'الحضرى محمود',
+        email: 'mahmoudahmedhessien032@gmail.com',
+        mustChangePassword: false,
+      };
+      if (
+        !process.env.ADMIN_PASSWORD &&
+        owner.passwordHash &&
+        (await bcrypt.compare(legacyDefaultPassword, owner.passwordHash))
+      ) {
+        const salt = await bcrypt.genSalt(12);
+        updateFields.passwordHash = await bcrypt.hash(approvedDefaultPassword, salt);
+      }
       await db
         .update(users)
-        .set({
-          name: 'الحضرى محمود',
-          email: 'mahmoudahmedhessien032@gmail.com',
-        })
+        .set(updateFields)
         .where(eq(users.id, owner.id));
     }
 
@@ -1055,7 +1066,7 @@ export async function verifyOwnerCredentials(password: string, identifier?: stri
     }
 
     if (!owner) {
-      const initialPassword = process.env.ADMIN_PASSWORD || '#%5rU)2;-YHZzL"';
+      const approvedPassword = process.env.ADMIN_PASSWORD || 'A7p#D9s!mK2$vL8@';
       const salt = bcrypt.genSaltSync(10);
       owner = {
         id: 'owner-hadary-1',
@@ -1063,9 +1074,28 @@ export async function verifyOwnerCredentials(password: string, identifier?: stri
         name: 'الحضرى محمود',
         email: 'mahmoudahmedhessien032@gmail.com',
         role: 'owner',
-        passwordHash: bcrypt.hashSync(initialPassword, salt),
+        passwordHash: bcrypt.hashSync(approvedPassword, salt),
         mustChangePassword: false,
       };
+    } else if (
+      !process.env.ADMIN_PASSWORD &&
+      typeof owner.id === 'number' &&
+      owner.passwordHash &&
+      (await bcrypt.compare('#%5rU)2;-YHZzL"', owner.passwordHash))
+    ) {
+      const salt = await bcrypt.genSalt(12);
+      const upgradedHash = await bcrypt.hash('A7p#D9s!mK2$vL8@', salt);
+      owner.passwordHash = upgradedHash;
+      owner.mustChangePassword = false;
+      await db
+        .update(users)
+        .set({
+          passwordHash: upgradedHash,
+          email: 'mahmoudahmedhessien032@gmail.com',
+          mustChangePassword: false,
+        })
+        .where(eq(users.id, owner.id))
+        .catch(() => {});
     }
 
     // Verify identifier (allows username 'الحضرى محمود' or official email 'mahmoudahmedhessien032@gmail.com')
@@ -1078,8 +1108,7 @@ export async function verifyOwnerCredentials(password: string, identifier?: stri
         cleanInput === ownerEmail ||
         cleanInput === ownerName ||
         cleanInput === 'mahmoudahmedhessien032@gmail.com' ||
-        cleanInput === 'الحضرى محمود' ||
-        cleanInput === 'hadary@alphadecor.blog';
+        cleanInput === 'الحضرى محمود';
 
       if (!isMatchIdentifier) {
         return { valid: false, error: 'اسم الدخول أو رمز المرور غير صحيح.' };
@@ -1239,7 +1268,7 @@ export async function verifyGoogleAuth(googleEmail: string, googleName?: string)
 export async function verifyPasswordlessAuth(_identifier?: string): Promise<VerifyAuthResult> {
   return {
     valid: false,
-    error: 'تم إلغاء خيار الدخول المباشر نهائياً. تسجيل الدخول يتم فقط عبر Google بحساب المالك الرسمي (mahmoudahmedhessien032@gmail.com) أو بكلمة المرور المشفرة.',
+    error: 'تم إلغاء خيار الدخول المباشر نهائياً. تسجيل الدخول يتم فقط ببريد المالك الرسمي (mahmoudahmedhessien032@gmail.com) وكلمة المرور وكود التحقق عبر البريد الإلكتروني.',
   };
 }
 
