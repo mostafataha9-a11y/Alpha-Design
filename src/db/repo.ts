@@ -1060,8 +1060,10 @@ export async function verifyOwnerCredentials(password: string, identifier?: stri
         if (owners.length > 0 && owners[0].passwordHash) {
           owner = owners[0];
         }
-      } catch {
-        // Quiet fallback
+      } catch (err: any) {
+        if (err?.message?.includes('Connection terminated') || err?.code === 'ECONNRESET') {
+          markDbUnreachable();
+        }
       }
     }
 
@@ -1541,70 +1543,78 @@ export async function checkDbRateLimit(ip: string): Promise<{
   remainingAttempts: number;
   retryAfterSeconds?: number;
 }> {
+  const cleanIp = String(ip || 'unknown').slice(0, 100);
   try {
-    const cleanIp = String(ip || 'unknown').slice(0, 100);
-    const now = new Date();
+    if (await isDbReachable()) {
+      const now = new Date();
 
-    const rows = await db
-      .select()
-      .from(loginRateLimits)
-      .where(eq(loginRateLimits.ip, cleanIp))
-      .limit(1);
+      const rows = await db
+        .select()
+        .from(loginRateLimits)
+        .where(eq(loginRateLimits.ip, cleanIp))
+        .limit(1);
 
-    if (rows.length === 0) {
-      return { allowed: true, remainingAttempts: RATE_LIMIT_MAX_ATTEMPTS };
-    }
+      if (rows.length === 0) {
+        return { allowed: true, remainingAttempts: RATE_LIMIT_MAX_ATTEMPTS };
+      }
 
-    const entry = rows[0];
+      const entry = rows[0];
 
-    // Check if locked out
-    if (entry.blockedUntil && new Date(entry.blockedUntil).getTime() > now.getTime()) {
-      const retryAfterSeconds = Math.ceil(
-        (new Date(entry.blockedUntil).getTime() - now.getTime()) / 1000
-      );
+      // Check if locked out
+      if (entry.blockedUntil && new Date(entry.blockedUntil).getTime() > now.getTime()) {
+        const retryAfterSeconds = Math.ceil(
+          (new Date(entry.blockedUntil).getTime() - now.getTime()) / 1000
+        );
+        return {
+          allowed: false,
+          remainingAttempts: 0,
+          retryAfterSeconds,
+        };
+      }
+
+      // Check if previous window expired
+      const firstAttemptTime = entry.firstAttemptAt ? new Date(entry.firstAttemptAt).getTime() : 0;
+      if (now.getTime() - firstAttemptTime > RATE_LIMIT_WINDOW_MS) {
+        await db
+          .update(loginRateLimits)
+          .set({
+            attemptCount: 0,
+            firstAttemptAt: now,
+            blockedUntil: null,
+            updatedAt: now,
+          })
+          .where(eq(loginRateLimits.ip, cleanIp));
+
+        return { allowed: true, remainingAttempts: RATE_LIMIT_MAX_ATTEMPTS };
+      }
+
+      const remaining = Math.max(0, RATE_LIMIT_MAX_ATTEMPTS - entry.attemptCount);
       return {
-        allowed: false,
-        remainingAttempts: 0,
-        retryAfterSeconds,
+        allowed: entry.attemptCount < RATE_LIMIT_MAX_ATTEMPTS,
+        remainingAttempts: remaining,
       };
     }
-
-    // Check if previous window expired
-    const firstAttemptTime = entry.firstAttemptAt ? new Date(entry.firstAttemptAt).getTime() : 0;
-    if (now.getTime() - firstAttemptTime > RATE_LIMIT_WINDOW_MS) {
-      // Window reset
-      await db
-        .update(loginRateLimits)
-        .set({
-          attemptCount: 0,
-          firstAttemptAt: now,
-          blockedUntil: null,
-          updatedAt: now,
-        })
-        .where(eq(loginRateLimits.ip, cleanIp));
-
-      return { allowed: true, remainingAttempts: RATE_LIMIT_MAX_ATTEMPTS };
+  } catch (error: any) {
+    if (error?.message?.includes('Connection terminated') || error?.code === 'ECONNRESET') {
+      markDbUnreachable();
     }
-
-    const remaining = Math.max(0, RATE_LIMIT_MAX_ATTEMPTS - entry.attemptCount);
-    return {
-      allowed: entry.attemptCount < RATE_LIMIT_MAX_ATTEMPTS,
-      remainingAttempts: remaining,
-    };
-  } catch (error) {
-    const cleanIp = String(ip || 'unknown').slice(0, 100);
-    const nowMs = Date.now();
-    const memEntry = memoryLoginRateLimits.get(cleanIp);
-    if (!memEntry) {
-      return { allowed: true, remainingAttempts: RATE_LIMIT_MAX_ATTEMPTS };
-    }
-    if (memEntry.blockedUntil && memEntry.blockedUntil > nowMs) {
-      const retryAfterSeconds = Math.ceil((memEntry.blockedUntil - nowMs) / 1000);
-      return { allowed: false, remainingAttempts: 0, retryAfterSeconds };
-    }
-    const remaining = Math.max(0, RATE_LIMIT_MAX_ATTEMPTS - memEntry.attemptCount);
-    return { allowed: memEntry.attemptCount < RATE_LIMIT_MAX_ATTEMPTS, remainingAttempts: remaining };
   }
+
+  const nowMs = Date.now();
+  const memEntry = memoryLoginRateLimits.get(cleanIp);
+  if (!memEntry) {
+    return { allowed: true, remainingAttempts: RATE_LIMIT_MAX_ATTEMPTS };
+  }
+  if (nowMs - memEntry.firstAttemptAt > RATE_LIMIT_WINDOW_MS) {
+    memoryLoginRateLimits.delete(cleanIp);
+    return { allowed: true, remainingAttempts: RATE_LIMIT_MAX_ATTEMPTS };
+  }
+  if (memEntry.blockedUntil && memEntry.blockedUntil > nowMs) {
+    const retryAfterSeconds = Math.ceil((memEntry.blockedUntil - nowMs) / 1000);
+    return { allowed: false, remainingAttempts: 0, retryAfterSeconds };
+  }
+  const remaining = Math.max(0, RATE_LIMIT_MAX_ATTEMPTS - memEntry.attemptCount);
+  return { allowed: memEntry.attemptCount < RATE_LIMIT_MAX_ATTEMPTS, remainingAttempts: remaining };
 }
 
 export async function recordDbFailedLogin(ip: string): Promise<{
@@ -1630,65 +1640,74 @@ export async function recordDbFailedLogin(ip: string): Promise<{
   memoryLoginRateLimits.set(cleanIp, memEntry);
 
   try {
-    const now = new Date();
+    if (await isDbReachable()) {
+      const now = new Date();
 
-    const rows = await db
-      .select()
-      .from(loginRateLimits)
-      .where(eq(loginRateLimits.ip, cleanIp))
-      .limit(1);
+      const rows = await db
+        .select()
+        .from(loginRateLimits)
+        .where(eq(loginRateLimits.ip, cleanIp))
+        .limit(1);
 
-    if (rows.length === 0) {
-      await db.insert(loginRateLimits).values({
-        ip: cleanIp,
-        attemptCount: 1,
-        firstAttemptAt: now,
-        blockedUntil: null,
-        updatedAt: now,
-      });
-      return { locked: false };
+      if (rows.length === 0) {
+        await db.insert(loginRateLimits).values({
+          ip: cleanIp,
+          attemptCount: 1,
+          firstAttemptAt: now,
+          blockedUntil: null,
+          updatedAt: now,
+        });
+        return { locked: false };
+      }
+
+      const entry = rows[0];
+      const firstAttemptTime = entry.firstAttemptAt ? new Date(entry.firstAttemptAt).getTime() : 0;
+      const isWindowExpired = now.getTime() - firstAttemptTime > RATE_LIMIT_WINDOW_MS;
+
+      const newCount = isWindowExpired ? 1 : entry.attemptCount + 1;
+      const firstAttemptAt = isWindowExpired ? now : entry.firstAttemptAt;
+
+      let blockedUntil: Date | null = null;
+      let locked = false;
+      let retryAfterSeconds: number | undefined;
+
+      if (newCount >= RATE_LIMIT_MAX_ATTEMPTS) {
+        blockedUntil = new Date(now.getTime() + RATE_LIMIT_LOCKOUT_MS);
+        locked = true;
+        retryAfterSeconds = Math.ceil(RATE_LIMIT_LOCKOUT_MS / 1000);
+      }
+
+      await db
+        .update(loginRateLimits)
+        .set({
+          attemptCount: newCount,
+          firstAttemptAt,
+          blockedUntil,
+          updatedAt: now,
+        })
+        .where(eq(loginRateLimits.ip, cleanIp));
+
+      return { locked, retryAfterSeconds };
     }
-
-    const entry = rows[0];
-    const firstAttemptTime = entry.firstAttemptAt ? new Date(entry.firstAttemptAt).getTime() : 0;
-    const isWindowExpired = now.getTime() - firstAttemptTime > RATE_LIMIT_WINDOW_MS;
-
-    const newCount = isWindowExpired ? 1 : entry.attemptCount + 1;
-    const firstAttemptAt = isWindowExpired ? now : entry.firstAttemptAt;
-
-    let blockedUntil: Date | null = null;
-    let locked = false;
-    let retryAfterSeconds: number | undefined;
-
-    if (newCount >= RATE_LIMIT_MAX_ATTEMPTS) {
-      blockedUntil = new Date(now.getTime() + RATE_LIMIT_LOCKOUT_MS);
-      locked = true;
-      retryAfterSeconds = Math.ceil(RATE_LIMIT_LOCKOUT_MS / 1000);
+  } catch (error: any) {
+    if (error?.message?.includes('Connection terminated') || error?.code === 'ECONNRESET') {
+      markDbUnreachable();
     }
-
-    await db
-      .update(loginRateLimits)
-      .set({
-        attemptCount: newCount,
-        firstAttemptAt,
-        blockedUntil,
-        updatedAt: now,
-      })
-      .where(eq(loginRateLimits.ip, cleanIp));
-
-    return { locked, retryAfterSeconds };
-  } catch (error) {
-    return { locked: memLocked, retryAfterSeconds: memRetrySec };
   }
+  return { locked: memLocked, retryAfterSeconds: memRetrySec };
 }
 
 export async function resetDbRateLimit(ip: string): Promise<void> {
   const cleanIp = String(ip || 'unknown').slice(0, 100);
   memoryLoginRateLimits.delete(cleanIp);
   try {
-    await db.delete(loginRateLimits).where(eq(loginRateLimits.ip, cleanIp));
-  } catch (error) {
-    // Ignore db disconnect
+    if (await isDbReachable()) {
+      await db.delete(loginRateLimits).where(eq(loginRateLimits.ip, cleanIp));
+    }
+  } catch (error: any) {
+    if (error?.message?.includes('Connection terminated') || error?.code === 'ECONNRESET') {
+      markDbUnreachable();
+    }
   }
 }
 

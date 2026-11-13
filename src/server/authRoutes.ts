@@ -109,6 +109,9 @@ export function verifyCsrfOrigin(req: Request, res: Response, next: NextFunction
       candidateUrl.hostname.toLowerCase() === currentHost.split(':')[0] ||
       (forwardedHost && candidateUrl.hostname.toLowerCase() === forwardedHost.split(':')[0]) ||
       candidateHost.endsWith('.run.app') ||
+      candidateHost.endsWith('.googleusercontent.com') ||
+      candidateHost.endsWith('.usercontent.goog') ||
+      candidateHost.endsWith('.google.com') ||
       candidateHost === 'aistudio.google.com' ||
       candidateHost.startsWith('localhost') ||
       candidateHost.startsWith('127.0.0.1');
@@ -179,87 +182,94 @@ authRouter.use(verifyCsrfOrigin);
 // AUTH ENDPOINTS
 // ----------------------------------------------------
 authRouter.post('/api/auth/login', async (req: Request, res: Response) => {
-  const ip = req.ip || (req.socket.remoteAddress as string) || 'unknown';
+  try {
+    const ip = req.ip || (req.socket.remoteAddress as string) || 'unknown';
 
-  // Persistent IP rate limit check
-  const rateCheck = await checkDbRateLimit(ip);
-  if (!rateCheck.allowed) {
-    if (rateCheck.retryAfterSeconds) {
-      res.setHeader('Retry-After', String(rateCheck.retryAfterSeconds));
-    }
-    return res.status(429).json({
-      error: `تم تجاوز عدد محاولات الدخول المسموح بها. الحساب مؤمّن ومقفل مؤقتاً. يرجى الانتظار ${Math.ceil((rateCheck.retryAfterSeconds || 900) / 60)} دقيقة.`,
-      retryAfterSeconds: rateCheck.retryAfterSeconds,
-    });
-  }
-
-  const { password, email, username, loginName } = req.body || {};
-  const identifier = (email || username || loginName || '').toString().trim();
-
-  if (!identifier) {
-    return res.status(400).json({ error: 'البريد الإلكتروني الرسمي للمالك مطلوب لتسجيل الدخول.' });
-  }
-
-  if (!password || typeof password !== 'string' || password.trim().length === 0 || password === 'passwordless') {
-    return res.status(400).json({ error: 'كلمة المرور مطلوبة لإرسال كود التحقق عبر البريد الإلكتروني.' });
-  }
-
-  const authResult = await verifyOwnerCredentials(password.trim(), identifier);
-
-  if (!authResult.valid || !authResult.user) {
-    const failRecord = await recordDbFailedLogin(ip);
-    if (failRecord.locked) {
-      res.setHeader('Retry-After', String(failRecord.retryAfterSeconds || 900));
+    // Persistent IP rate limit check
+    const rateCheck = await checkDbRateLimit(ip);
+    if (!rateCheck.allowed) {
+      if (rateCheck.retryAfterSeconds) {
+        res.setHeader('Retry-After', String(rateCheck.retryAfterSeconds));
+      }
       return res.status(429).json({
-        error: 'تم قفل محاولات تسجيل الدخول لمدة 15 دقيقة بعد 5 محاولات خاطئة متتالية.',
-        retryAfterSeconds: failRecord.retryAfterSeconds,
+        error: `تم تجاوز عدد محاولات الدخول المسموح بها. الحساب مؤمّن ومقفل مؤقتاً. يرجى الانتظار ${Math.ceil((rateCheck.retryAfterSeconds || 900) / 60)} دقيقة.`,
+        retryAfterSeconds: rateCheck.retryAfterSeconds,
       });
     }
-    return res.status(401).json({ error: authResult.error || 'بيانات الدخول غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' });
+
+    const { password, email, username, loginName } = req.body || {};
+    const identifier = (email || username || loginName || '').toString().trim();
+
+    if (!identifier) {
+      return res.status(400).json({ error: 'البريد الإلكتروني الرسمي للمالك مطلوب لتسجيل الدخول.' });
+    }
+
+    if (!password || typeof password !== 'string' || password.trim().length === 0 || password === 'passwordless') {
+      return res.status(400).json({ error: 'كلمة المرور مطلوبة لإرسال كود التحقق عبر البريد الإلكتروني.' });
+    }
+
+    const authResult = await verifyOwnerCredentials(password.trim(), identifier);
+
+    if (!authResult.valid || !authResult.user) {
+      const failRecord = await recordDbFailedLogin(ip);
+      if (failRecord.locked) {
+        res.setHeader('Retry-After', String(failRecord.retryAfterSeconds || 900));
+        return res.status(429).json({
+          error: 'تم قفل محاولات تسجيل الدخول لمدة 15 دقيقة بعد 5 محاولات خاطئة متتالية.',
+          retryAfterSeconds: failRecord.retryAfterSeconds,
+        });
+      }
+      return res.status(401).json({ error: authResult.error || 'بيانات الدخول غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' });
+    }
+
+    // Step 1 passed -> create 6-digit OTP challenge and send verification email
+    cleanupExpiredOtpChallenges();
+    const targetEmail = (authResult.user.email || 'mahmoudahmedhessien032@gmail.com').trim().toLowerCase();
+    const challengeId = crypto.randomBytes(24).toString('hex');
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
+    const now = Date.now();
+
+    emailLoginChallenges.set(challengeId, {
+      challengeId,
+      codeHash: hashOtpCode(challengeId, otpCode),
+      user: authResult.user,
+      email: targetEmail,
+      createdAt: now,
+      expiresAt: now + OTP_TTL_MS,
+      cooldownUntil: now + OTP_RESEND_COOLDOWN_MS,
+      attempts: 0,
+    });
+
+    const emailDispatch = await sendLoginVerificationEmail({
+      to: targetEmail,
+      code: otpCode,
+      expiresInMinutes: 10,
+      ip,
+    });
+
+    const maskedEmail = maskEmailAddress(targetEmail);
+
+    return res.json({
+      success: true,
+      requiresEmailCode: true,
+      challengeId,
+      email: targetEmail,
+      maskedEmail,
+      emailSent: emailDispatch.sent,
+      deliveryMethod: emailDispatch.provider,
+      deliveryError: emailDispatch.sent ? undefined : emailDispatch.error,
+      expiresInMinutes: 10,
+      message: emailDispatch.sent
+        ? `تم إرسال كود التحقق المكون من 6 أرقام إلى بريدك الإلكتروني (${maskedEmail}).`
+        : 'تم التحقق من كلمة المرور وتوليد كود الدخول بنجاح (خادم SMTP للبريد غير مهيأ بعد في البيئة الحالية).',
+      ...(emailDispatch.sent ? {} : { previewCode: otpCode }),
+    });
+  } catch (err: any) {
+    console.error('Login step 1 route error:', err);
+    return res.status(500).json({
+      error: 'حدث خطأ داخلي في خادم المصادقة أثناء معالجة طلب الدخول. يرجى المحاولة مجدداً.',
+    });
   }
-
-  // Step 1 passed -> create 6-digit OTP challenge and send verification email
-  cleanupExpiredOtpChallenges();
-  const targetEmail = (authResult.user.email || 'mahmoudahmedhessien032@gmail.com').trim().toLowerCase();
-  const challengeId = crypto.randomBytes(24).toString('hex');
-  const otpCode = crypto.randomInt(100000, 1000000).toString();
-  const now = Date.now();
-
-  emailLoginChallenges.set(challengeId, {
-    challengeId,
-    codeHash: hashOtpCode(challengeId, otpCode),
-    user: authResult.user,
-    email: targetEmail,
-    createdAt: now,
-    expiresAt: now + OTP_TTL_MS,
-    cooldownUntil: now + OTP_RESEND_COOLDOWN_MS,
-    attempts: 0,
-  });
-
-  const emailDispatch = await sendLoginVerificationEmail({
-    to: targetEmail,
-    code: otpCode,
-    expiresInMinutes: 10,
-    ip,
-  });
-
-  const maskedEmail = maskEmailAddress(targetEmail);
-
-  return res.json({
-    success: true,
-    requiresEmailCode: true,
-    challengeId,
-    email: targetEmail,
-    maskedEmail,
-    emailSent: emailDispatch.sent,
-    deliveryMethod: emailDispatch.provider,
-    deliveryError: emailDispatch.sent ? undefined : emailDispatch.error,
-    expiresInMinutes: 10,
-    message: emailDispatch.sent
-      ? `تم إرسال كود التحقق المكون من 6 أرقام إلى بريدك الإلكتروني (${maskedEmail}).`
-      : 'تم التحقق من كلمة المرور وتوليد كود الدخول بنجاح (خادم SMTP للبريد غير مهيأ بعد في البيئة الحالية).',
-    ...(emailDispatch.sent ? {} : { previewCode: otpCode }),
-  });
 });
 
 /**
@@ -461,31 +471,36 @@ authRouter.post('/api/auth/logout', async (req: Request, res: Response) => {
 });
 
 authRouter.get('/api/auth/me', async (req: Request, res: Response) => {
-  const cookieToken = req.cookies?.alpha_session;
-  const headerToken = req.headers.authorization?.startsWith('Bearer ')
-    ? req.headers.authorization.split('Bearer ')[1].trim()
-    : null;
+  try {
+    const cookieToken = req.cookies?.alpha_session;
+    const headerToken = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.split('Bearer ')[1].trim()
+      : null;
 
-  const token = cookieToken || headerToken;
-  if (!token) {
+    const token = cookieToken || headerToken;
+    if (!token) {
+      return res.json({ isLoggedIn: false });
+    }
+
+    const user = await validateDbSession(token);
+    if (!user) {
+      return res.json({ isLoggedIn: false });
+    }
+
+    return res.json({
+      isLoggedIn: true,
+      user: {
+        uid: user.uid,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        mustChangePassword: user.mustChangePassword,
+      },
+    });
+  } catch (err) {
+    console.error('/api/auth/me error:', err);
     return res.json({ isLoggedIn: false });
   }
-
-  const user = await validateDbSession(token);
-  if (!user) {
-    return res.json({ isLoggedIn: false });
-  }
-
-  res.json({
-    isLoggedIn: true,
-    user: {
-      uid: user.uid,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      mustChangePassword: user.mustChangePassword,
-    },
-  });
 });
 
 authRouter.post('/api/auth/change-password', requireAdminAuth, async (req: AuthRequest, res: Response) => {

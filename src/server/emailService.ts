@@ -83,6 +83,9 @@ export async function sendLoginVerificationEmail(params: {
         host: smtpHost,
         port: smtpPort,
         secure: smtpSecure,
+        connectionTimeout: 7000,
+        greetingTimeout: 7000,
+        socketTimeout: 10000,
         auth: {
           user: smtpUser,
           pass: smtpPass,
@@ -123,6 +126,7 @@ export async function sendLoginVerificationEmail(params: {
           Authorization: `Bearer ${resendKey}`,
           'Content-Type': 'application/json',
         },
+        signal: AbortSignal.timeout(7000),
         body: JSON.stringify({
           from: fromAddress,
           to: [recipient],

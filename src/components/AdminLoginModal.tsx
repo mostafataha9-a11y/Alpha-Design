@@ -91,6 +91,46 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
   if (!isOpen) return null;
 
+  const postAuthJson = async (url: string, payload: Record<string, unknown>) => {
+    let lastError: any = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          cache: 'no-store',
+          credentials: 'include',
+          body: JSON.stringify(payload),
+        });
+
+        const rawText = await response.text();
+        let data: any = null;
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          data = null;
+        }
+
+        if ((response.status === 502 || response.status === 503 || response.status === 504) && attempt === 0) {
+          await new Promise((r) => setTimeout(r, 450));
+          continue;
+        }
+
+        return { ok: response.ok, status: response.status, data, rawText };
+      } catch (err: any) {
+        lastError = err;
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 450));
+          continue;
+        }
+      }
+    }
+    throw lastError || new Error('Network error');
+  };
+
   // Step 1: Verify Email + Password & Request Email OTP Code
   const handleStep1Login = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -115,20 +155,23 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
     setIsVerifying(true);
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          email: cleanEmail,
-          password: trimmedPassword,
-        }),
+      const { ok, status, data } = await postAuthJson('/api/auth/login', {
+        email: cleanEmail,
+        password: trimmedPassword,
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        setErrorMsg(data.error || (isAr ? 'البريد الإلكتروني أو كلمة المرور غير صحيحة.' : 'Invalid credentials.'));
-        setIsVerifying(false);
+      if (!ok || !data) {
+        const serverErr = data?.error || data?.message;
+        setErrorMsg(
+          serverErr ||
+            (status >= 500
+              ? isAr
+                ? `استجابة غير متوقعة من خادم المصادقة (رمز ${status}). يرجى تحديث الصفحة والمحاولة مجدداً.`
+                : `Authentication server returned status ${status}.`
+              : isAr
+                ? 'البريد الإلكتروني أو كلمة المرور غير صحيحة.'
+                : 'Invalid credentials.')
+        );
         return;
       }
 
@@ -150,11 +193,9 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
               ? 'تم التحقق من كلمة المرور بنجاح. أدخل كود التحقق المكون من 6 أرقام لإتمام الدخول.'
               : 'Password verified. Enter the 6-digit verification code to sign in.'
         );
-        setIsVerifying(false);
         return;
       }
 
-      // Direct session fallback if server completes login directly
       const user: AdminUser = {
         name: data.user?.name || ownerName,
         role: data.user?.role || 'owner',
@@ -166,7 +207,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
       onClose();
     } catch (err: any) {
       console.error('Login step 1 error:', err);
-      setErrorMsg(isAr ? 'تعذر الاتصال بخادم المصادقة. يرجى المحاولة لاحقاً.' : 'Unable to connect to authentication server.');
+      setErrorMsg(isAr ? 'تعذر الاتصال بخادم المصادقة. يرجى التحقق من الاتصال وتحديث الصفحة ثم المحاولة مجدداً.' : 'Unable to connect to authentication server.');
     } finally {
       setIsVerifying(false);
     }
@@ -186,20 +227,17 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
     setIsVerifying(true);
     try {
-      const response = await fetch('/api/auth/login/verify-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          challengeId,
-          code: cleanCode,
-        }),
+      const { ok, status, data } = await postAuthJson('/api/auth/login/verify-code', {
+        challengeId,
+        code: cleanCode,
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        setErrorMsg(data.error || (isAr ? 'كود التحقق غير صحيح أو انتهت صلاحيته.' : 'Invalid or expired verification code.'));
-        setIsVerifying(false);
+      if (!ok || !data) {
+        setErrorMsg(
+          data?.error ||
+            data?.message ||
+            (isAr ? `فشل التحقق من الكود (رمز ${status}).` : 'Invalid or expired verification code.')
+        );
         return;
       }
 
@@ -216,7 +254,6 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         setCurrentPassword(password.trim());
         setMode('changePassword');
         setErrorMsg(isAr ? 'يجب تحديث كلمة المرور قبل متابعة استخدام لوحة الإدارة.' : 'Please update your password.');
-        setIsVerifying(false);
         return;
       }
 
@@ -227,7 +264,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
       }, 350);
     } catch (err: any) {
       console.error('Verify OTP error:', err);
-      setErrorMsg(isAr ? 'تعذر التحقق من الكود مع الخادم.' : 'Failed to verify code.');
+      setErrorMsg(isAr ? 'تعذر التحقق من الكود مع الخادم. يرجى المحاولة مجدداً.' : 'Failed to verify code.');
     } finally {
       setIsVerifying(false);
     }
@@ -241,20 +278,17 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     setIsResending(true);
 
     try {
-      const response = await fetch('/api/auth/login/resend-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ challengeId }),
-      });
+      const { ok, status, data } = await postAuthJson('/api/auth/login/resend-code', { challengeId });
 
-      const data = await response.json();
-      if (!response.ok) {
-        setErrorMsg(data.error || (isAr ? 'تعذر إعادة إرسال الكود.' : 'Failed to resend code.'));
-        if (data.retryAfterSeconds) {
+      if (!ok || !data) {
+        setErrorMsg(
+          data?.error ||
+            data?.message ||
+            (isAr ? `تعذر إعادة إرسال الكود (رمز ${status}).` : 'Failed to resend code.')
+        );
+        if (data?.retryAfterSeconds) {
           setResendCooldown(Number(data.retryAfterSeconds));
         }
-        setIsResending(false);
         return;
       }
 
@@ -317,20 +351,17 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
     setIsVerifying(true);
     try {
-      const response = await fetch('/api/auth/change-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          currentPassword: trimmedCurrent,
-          newPassword: trimmedNew,
-        }),
+      const { ok, status, data } = await postAuthJson('/api/auth/change-password', {
+        currentPassword: trimmedCurrent,
+        newPassword: trimmedNew,
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        setErrorMsg(data.error || (isAr ? 'فشل تغيير كلمة المرور.' : 'Failed to change password.'));
-        setIsVerifying(false);
+      if (!ok || !data) {
+        setErrorMsg(
+          data?.error ||
+            data?.message ||
+            (isAr ? `فشل تغيير كلمة المرور (رمز ${status}).` : 'Failed to change password.')
+        );
         return;
       }
 

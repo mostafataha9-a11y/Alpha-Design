@@ -227,6 +227,11 @@ app.use(socialRouter);
 app.use(articleAiRouter);
 app.use(aiChatAssistRouter);
 
+// Guarantee any unmatched /api/* path returns clean JSON instead of HTML SPA fallback
+app.use('/api', (_req: Request, res: Response) => {
+  res.status(404).json({ error: 'API_NOT_FOUND', message: 'مسار الواجهة البرمجية المطلوب غير موجود.' });
+});
+
 // Firebase Hosting config helper endpoint (prevents SPA HTML fallback returning 200 HTML for init.json)
 app.get('/__/firebase/init.json', (_req: Request, res: Response) => {
   try {
