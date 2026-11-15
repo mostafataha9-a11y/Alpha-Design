@@ -21,6 +21,11 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import { SiteSettings, Article } from '../types/blog';
+import {
+  chatWithGeminiClient,
+  isGeminiKeyError,
+  formatGeminiArabicError,
+} from '../services/geminiClient';
 
 interface ChatBotProps {
   settings: SiteSettings;
@@ -224,46 +229,37 @@ Looking forward to starting immediately!`;
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: updatedMessages.map((m) => ({
-            role: m.role === 'assistant' ? 'model' : 'user',
-            content: m.content,
+      const data = await chatWithGeminiClient({
+        messages: updatedMessages.map((m) => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          content: m.content,
+        })),
+        siteInfo: {
+          blogName: settings.blogName,
+          tagline: settings.tagline,
+          authorName,
+          recentArticles: articles.slice(0, 5).map((a) => ({
+            id: a.id,
+            title: a.title,
+            category: a.category,
+            excerpt: a.excerpt,
           })),
-          siteInfo: {
-            blogName: settings.blogName,
-            tagline: settings.tagline,
-            authorName,
-            recentArticles: articles.slice(0, 5).map((a) => ({
-              id: a.id,
-              title: a.title,
-              category: a.category,
-              excerpt: a.excerpt,
-            })),
-          },
-          negotiationConfig: {
-            ownerPhone,
-            ownerWhatsApp,
-            currency: negotiationConfig.currency || '$',
-            services: negotiationConfig.services || [],
-          },
-          currentArticle: currentArticle
-            ? {
-                title: currentArticle.title,
-                category: currentArticle.category,
-                excerpt: currentArticle.excerpt,
-              }
-            : null,
-        }),
+        },
+        negotiationConfig: {
+          ownerPhone,
+          ownerWhatsApp,
+          currency: negotiationConfig.currency || '$',
+          services: negotiationConfig.services || [],
+        },
+        currentArticle: currentArticle
+          ? {
+              title: currentArticle.title,
+              category: currentArticle.category,
+              excerpt: currentArticle.excerpt,
+            }
+          : null,
       });
 
-      if (!response.ok) {
-        throw new Error('Chat API returned error');
-      }
-
-      const data = await response.json();
       const rawReply = data.reply || (isAr ? 'عفواً، لم أتمكن من الحصول على إجابة حالياً.' : 'Could not generate reply.');
 
       const { cleanText, deal } = parseDealFromContent(rawReply);
@@ -283,14 +279,15 @@ Looking forward to starting immediately!`;
       }
     } catch (err) {
       console.error('Chat error:', err);
-      // Fallback local response
-      const fallbackReply = isAr
-        ? `يسعدنا تواصلك مع مدونة واستوديو ألفا ديزاين لإدارة وتصميم المشاريع بإشراف «${authorName}». يمكنك التواصل المباشر هاتفياً على ${ownerPhone} أو عبر الواتساب على ${ownerWhatsApp} لمناقشة كافة التفاصيل وحجز مشروعك فوراً.`
-        : `Thank you for contacting Alpha Design Studio led by ${authorName}. You can call directly at ${ownerPhone} or reach out via WhatsApp at ${ownerWhatsApp} to kick off your project!`;
+      const replyContent = isGeminiKeyError(err)
+        ? `⚠️ ${formatGeminiArabicError(err)}`
+        : isAr
+          ? `يسعدنا تواصلك مع مدونة واستوديو ألفا ديزاين لإدارة وتصميم المشاريع بإشراف «${authorName}». يمكنك التواصل المباشر هاتفياً على ${ownerPhone} أو عبر الواتساب على ${ownerWhatsApp} لمناقشة كافة التفاصيل وحجز مشروعك فوراً.`
+          : `Thank you for contacting Alpha Design Studio led by ${authorName}. You can call directly at ${ownerPhone} or reach out via WhatsApp at ${ownerWhatsApp} to kick off your project!`;
 
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: fallbackReply },
+        { role: 'assistant', content: replyContent },
       ]);
     } finally {
       setIsLoading(false);

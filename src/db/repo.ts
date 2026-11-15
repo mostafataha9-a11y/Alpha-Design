@@ -21,7 +21,11 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import fs from 'fs';
 import { INITIAL_ARTICLES, INITIAL_SETTINGS } from '../data/initialData.ts';
-import { validateArticlePayload, countActualWords } from '../utils/articleValidator.ts';
+import {
+  validateArticlePayload,
+  countActualWords,
+  sanitizeArticleSlug,
+} from '../utils/articleValidator.ts';
 import { hammingDistance } from '../utils/imageHasher.ts';
 
 // ----------------------------------------------------
@@ -350,18 +354,39 @@ export async function getDbArticles(options: GetArticlesOptions = { statusFilter
 
 export async function createDbArticle(articleData: any) {
   const id = articleData.id || 'post-' + Date.now();
-  let slug = (articleData.slug || (articleData.title || 'decor-post').toLowerCase().replace(/[\s/\\?#%]+/g, '-').replace(/-+/g, '-').slice(0, 60)).trim();
-  if (!slug || slug === '-') {
-    slug = 'decor-post-' + Date.now();
+  const resolvedStatus: 'published' | 'draft' = articleData.status === 'draft' ? 'draft' : 'published';
+  let slug = sanitizeArticleSlug(articleData.slug || articleData.title || 'decor-post');
+
+  // Ensure slug does not collide with another article (unique constraint on articles.slug)
+  const memCollision = memoryArticles.find((a) => a.slug === slug && a.id !== id);
+  if (memCollision) {
+    const suffix = id.replace(/[^a-zA-Z0-9]/g, '').slice(-6) || Date.now().toString(36);
+    slug = `${slug.slice(0, 50).replace(/-+$/g, '')}-${suffix}`;
   }
 
-  // 1. Strict Article Quality Validation
+  if (await isDbReachable()) {
+    try {
+      const dbCollision = await db
+        .select({ id: articles.id })
+        .from(articles)
+        .where(eq(articles.slug, slug))
+        .limit(1);
+      if (dbCollision.length > 0 && dbCollision[0].id !== id) {
+        const suffix = Date.now().toString(36).slice(-5);
+        slug = `${slug.slice(0, 50).replace(/-+$/g, '')}-${suffix}`;
+      }
+    } catch {
+      // Ignore pre-check error; insert handler handles DB reachability
+    }
+  }
+
+  // 1. Article Quality Validation
   const validation = validateArticlePayload({
     title: articleData.title,
     content: articleData.content,
     excerpt: articleData.excerpt,
     category: articleData.category,
-    status: articleData.status || 'published',
+    status: resolvedStatus,
     tags: articleData.tags,
   }, {
     minWords: 300,
@@ -369,7 +394,7 @@ export async function createDbArticle(articleData: any) {
     strictPublish: false,
   });
 
-  const calculatedReadingTime = Math.max(5, Math.round((validation.actualWordCount || 1000) / 200));
+  const calculatedReadingTime = Math.max(1, Math.round((validation.actualWordCount || 200) / 200));
 
   // 2. Extract and check images inside markdown
   const imageMarkdownMatches = (articleData.content || '').match(/!\[.*?\]\((.*?)\)/g) || [];
@@ -389,7 +414,7 @@ export async function createDbArticle(articleData: any) {
 
   const storedArticle = {
     id,
-    title: articleData.title,
+    title: (articleData.title || '').trim(),
     slug,
     excerpt: articleData.excerpt || '',
     content: articleData.content || '',
@@ -406,14 +431,14 @@ export async function createDbArticle(articleData: any) {
     views: articleData.views || 1,
     likes: articleData.likes || 0,
     comments: Array.isArray(articleData.comments) ? articleData.comments : [],
-    status: articleData.status || 'published',
+    status: resolvedStatus,
     isAutoPublished: !!articleData.isAutoPublished,
-    adSenseCompliant: true,
+    adSenseCompliant: resolvedStatus === 'published',
     publishedAt: new Date(articleData.publishedAt || Date.now()).toISOString(),
     validation,
   };
 
-  // Immediate in-memory cache update - GUARANTEES instant publication on Home & Articles view
+  // Immediate in-memory cache update
   const existingMemIdx = memoryArticles.findIndex((a) => a.id === id);
   if (existingMemIdx >= 0) {
     memoryArticles[existingMemIdx] = storedArticle;
@@ -444,7 +469,7 @@ export async function createDbArticle(articleData: any) {
         comments: storedArticle.comments,
         status: storedArticle.status,
         isAutoPublished: storedArticle.isAutoPublished,
-        adSenseCompliant: true,
+        adSenseCompliant: storedArticle.adSenseCompliant,
         publishedAt: new Date(storedArticle.publishedAt),
         updatedAt: new Date(),
       };
@@ -455,22 +480,61 @@ export async function createDbArticle(articleData: any) {
         await db.insert(articles).values(valuesToStore);
       }
 
-      // Record image usage logs for deduplication
-      const uniqueExtracted = Array.from(new Set(extractedImageUrls));
-      for (let idx = 0; idx < uniqueExtracted.length; idx++) {
-        const imgUrl = uniqueExtracted[idx];
-        const caption = articleData.imageCaptions?.[idx] || articleData.title;
-        await recordImageUsage({
-          articleId: storedArticle.id,
-          imageUrl: imgUrl,
-          imageHash: articleData.imageHashes?.[imgUrl] || '',
-          caption,
-          altText: caption,
-          topicCategory: articleData.category || 'decor_paints',
-        });
+      // Record image usage logs only for published articles so drafts don't lock images prematurely
+      if (resolvedStatus === 'published') {
+        const uniqueExtracted = Array.from(new Set(extractedImageUrls));
+        for (let idx = 0; idx < uniqueExtracted.length; idx++) {
+          const imgUrl = uniqueExtracted[idx];
+          const caption = articleData.imageCaptions?.[idx] || articleData.title;
+          await recordImageUsage({
+            articleId: storedArticle.id,
+            imageUrl: imgUrl,
+            imageHash: articleData.imageHashes?.[imgUrl] || '',
+            caption,
+            altText: caption,
+            topicCategory: articleData.category || 'decor_paints',
+          });
+        }
       }
-    } catch {
-      // Memory storage is active and preserved
+    } catch (dbErr: any) {
+      if (dbErr?.message?.includes('Connection terminated') || dbErr?.code === 'ECONNRESET') {
+        markDbUnreachable();
+      } else if (dbErr?.code === '23505') {
+        // Retry once with guaranteed unique slug suffix if race condition occurred
+        const retrySlug = `${slug.slice(0, 48).replace(/-+$/g, '')}-${Date.now().toString(36)}`;
+        storedArticle.slug = retrySlug;
+        try {
+          await db.insert(articles).values({
+            id,
+            title: storedArticle.title,
+            slug: retrySlug,
+            excerpt: storedArticle.excerpt,
+            content: storedArticle.content,
+            featuredImage: storedArticle.featuredImage,
+            authorName: storedArticle.author.name,
+            authorRole: storedArticle.author.role,
+            category: storedArticle.category,
+            tags: storedArticle.tags,
+            imageCaptions: storedArticle.imageCaptions,
+            readingTime: calculatedReadingTime,
+            views: storedArticle.views,
+            likes: storedArticle.likes,
+            comments: storedArticle.comments,
+            status: storedArticle.status,
+            isAutoPublished: storedArticle.isAutoPublished,
+            adSenseCompliant: storedArticle.adSenseCompliant,
+            publishedAt: new Date(storedArticle.publishedAt),
+            updatedAt: new Date(),
+          });
+          syncMemoryArticlesToFile();
+        } catch (retryErr: any) {
+          console.error('[DB] createDbArticle retry failed:', retryErr?.message || retryErr);
+          throw retryErr;
+        }
+      } else {
+        console.error('[DB] createDbArticle failed:', dbErr?.message || dbErr);
+        throw dbErr;
+      }
     }
   }
 

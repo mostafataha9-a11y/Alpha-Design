@@ -21,6 +21,12 @@ import {
   FastForward
 } from 'lucide-react';
 import { Article, SiteSettings, ActiveTab } from '../types/blog';
+import {
+  describeArticleVisualsWithGeminiClient,
+  blindReaderDialogueWithGeminiClient,
+  isGeminiKeyError,
+  formatGeminiArabicError,
+} from '../services/geminiClient';
 
 // Web Speech API interface definitions for TypeScript
 interface IWindow extends Window {
@@ -561,19 +567,17 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
     startStreamingSingleText(introChunk);
 
     try {
-      const res = await fetch('/api/describe-article-visuals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          articleTitle: target.title,
-          category: target.category,
-          excerpt: target.excerpt,
-          content: target.content,
-        }),
+      const data = await describeArticleVisualsWithGeminiClient({
+        articleTitle: target.title,
+        category: target.category,
+        excerpt: target.excerpt,
+        content: target.content,
+        ownerName,
       });
 
-      const data = await res.json();
-      const narrationText = data.audioDescription || `في هذا التصميم بإشراف المهندس ${ownerName}، تم تنسيق درجات الألوان الهادئة مع لمسات بديل الرخام وبديل الخشب وإضاءة الليد المخفية لإعطاء اتساع وراحة نفسية بالغة.`;
+      const narrationText =
+        data.audioDescription ||
+        `في هذا التصميم بإشراف المهندس ${ownerName}، تم تنسيق درجات الألوان الهادئة مع لمسات بديل الرخام وبديل الخشب وإضاءة الليد المخفية لإعطاء اتساع وراحة نفسية بالغة.`;
 
       const logMsg: DialogueMessage = {
         id: 'msg-desc-' + Date.now(),
@@ -586,9 +590,23 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
 
       setDialogueHistory((prev) => [...prev, logMsg]);
       startStreamingSingleText(narrationText);
-    } catch {
-      const fallback = `في هذا التصميم بإشراف المهندس ${ownerName}، يتناغم اللون الجريج الدافئ مع حوائط الأوف وايت الهادئة وألواح بديل الرخام الكلكتا الإيطالي، مما يمنح الفراغ عمقاً فندقياً راقياً.`;
-      startStreamingSingleText(fallback);
+    } catch (err) {
+      if (isGeminiKeyError(err)) {
+        const keyErrMsg = formatGeminiArabicError(err);
+        setDialogueHistory((prev) => [
+          ...prev,
+          {
+            id: 'msg-key-err-' + Date.now(),
+            sender: 'assistant',
+            text: `⚠️ ${keyErrMsg}`,
+            timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]);
+        startStreamingSingleText(keyErrMsg);
+      } else {
+        const fallback = `في هذا التصميم بإشراف المهندس ${ownerName}، يتناغم اللون الجريج الدافئ مع حوائط الأوف وايت الهادئة وألواح بديل الرخام الكلكتا الإيطالي، مما يمنح الفراغ عمقاً فندقياً راقياً.`;
+        startStreamingSingleText(fallback);
+      }
     }
   };
 
@@ -767,18 +785,14 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
     setIsLoadingAi(true);
 
     try {
-      const response = await fetch('/api/blind-reader-dialogue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userSpeech: userText,
-          currentArticle,
-          articles,
-          history: dialogueHistory.map((m) => ({ role: m.sender, text: m.text })),
-        }),
+      const data = await blindReaderDialogueWithGeminiClient({
+        userSpeech: userText,
+        currentArticle,
+        articles,
+        history: dialogueHistory.map((m) => ({ role: m.sender, text: m.text })),
+        ownerName,
       });
 
-      const data = await response.json();
       const replyText =
         data.speechResponse ||
         `أهلاً بك يا ضيفنا العزيز في دار ألفا ديزاين. يشرفنا دائماً تقديم المشورة المعمارية الأرقى لك مع المهندس ${ownerName}.`;
@@ -813,16 +827,18 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
 
       setDialogueHistory((prev) => [...prev, aiMsg]);
       startStreamingSingleText(replyText);
-    } catch {
-      const fallbackReply = `يا ضيفنا العزيز، بصفتي مضيفك في دار ألفا ديزاين المتحدث باسم المهندس «${ownerName}»، أسعد بخدمتك في اختيار أجمل دهانات الحوائط وبديل الرخام. يمكنك سؤالي أو طلبي بقراءة أي مقال فوراً!`;
+    } catch (err) {
+      const replyText = isGeminiKeyError(err)
+        ? `⚠️ ${formatGeminiArabicError(err)}`
+        : `يا ضيفنا العزيز، بصفتي مضيفك في دار ألفا ديزاين المتحدث باسم المهندس «${ownerName}»، أسعد بخدمتك في اختيار أجمل دهانات الحوائط وبديل الرخام. يمكنك سؤالي أو طلبي بقراءة أي مقال فوراً!`;
       const fallbackMsg: DialogueMessage = {
         id: 'msg-fb-' + Date.now(),
         sender: 'assistant',
-        text: fallbackReply,
+        text: replyText,
         timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
       };
       setDialogueHistory((prev) => [...prev, fallbackMsg]);
-      startStreamingSingleText(fallbackReply);
+      startStreamingSingleText(replyText);
     } finally {
       setIsLoadingAi(false);
     }

@@ -189,6 +189,15 @@ export const AutoPublishDashboard: React.FC<AutoPublishDashboardProps> = ({
         }),
       });
 
+      const ct = (response.headers.get('content-type') || '').toLowerCase();
+      if (!ct.includes('application/json') || response.status === 404) {
+        throw new Error(
+          isAr
+            ? 'يرجى استخدام «منشئ المقالات الذكي» أو «المحرر اليدوي» للنشر المباشر عبر Gemini API.'
+            : 'Please use Smart Article Creator or Manual Editor to generate & publish articles directly.'
+        );
+      }
+
       if (response.status === 401) {
         throw new Error(
           isAr

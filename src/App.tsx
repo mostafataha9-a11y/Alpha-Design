@@ -255,46 +255,137 @@ export default function App() {
     };
   }, []);
 
-  // Initial load from Cloud SQL Database & verify session
+  // Sync /article/:slug and #article-... once DB articles load
+  const resolveDeepLinkArticle = (list: Article[]) => {
+    const pathname = window.location.pathname || '';
+    const rawHash = window.location.hash.replace(/^#/, '').trim();
+    let decodedHash = rawHash;
+    try {
+      decodedHash = decodeURIComponent(rawHash);
+    } catch {
+      decodedHash = rawHash;
+    }
+
+    if (pathname.startsWith('/article/') && pathname.length > 9) {
+      let slug = pathname.replace('/article/', '').trim();
+      try {
+        slug = decodeURIComponent(slug);
+      } catch {}
+      const initialArticleId = (window as any).__INITIAL_ARTICLE_ID__;
+      const matched = list.find(
+        (a) =>
+          (initialArticleId && a.id === initialArticleId) ||
+          a.slug === slug ||
+          a.id === slug ||
+          encodeURIComponent(a.slug) === slug
+      );
+      if (matched) {
+        setSelectedArticle(matched);
+        setActiveTab('article-detail');
+      }
+      return;
+    }
+
+    if (decodedHash.startsWith('article-')) {
+      const key = decodedHash.replace(/^article-/, '');
+      const matched = list.find(
+        (a) => a.slug === key || a.id === key || encodeURIComponent(a.slug) === key
+      );
+      if (matched) {
+        setSelectedArticle(matched);
+        setActiveTab('article-detail');
+      }
+    }
+  };
+
+  // Initial load from Cloud SQL Database & verify session (with static Vite/Vercel localStorage fallback)
   useEffect(() => {
-    // 1. Verify session with backend
+    let mounted = true;
+    const isJsonResponse = (res: Response) =>
+      (res.headers.get('content-type') || '').toLowerCase().includes('application/json');
+
+    const loadStaticFallbackArticles = () => {
+      try {
+        const storedRaw = localStorage.getItem(STORAGE_KEY_ARTICLES);
+        if (storedRaw) {
+          const parsed = JSON.parse(storedRaw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed as Article[];
+          }
+        }
+      } catch {}
+      return INITIAL_ARTICLES;
+    };
+
+    // 1. Verify session with backend when JSON backend exists
     fetchWithAuth('/api/auth/me')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.isLoggedIn && data.user) {
+      .then(async (res) => {
+        if (!isJsonResponse(res)) {
+          // Running as pure static SPA (e.g. Vercel): preserve local adminUser session
+          return { staticMode: true, loggedIn: Boolean(adminUserRef.current?.isLoggedIn) };
+        }
+        const data = await res.json();
+        return { staticMode: false, data };
+      })
+      .then(async (authResult: any) => {
+        if (!mounted) return;
+        let loggedIn = false;
+
+        if (authResult.staticMode) {
+          loggedIn = authResult.loggedIn;
+          const fallbackList = loadStaticFallbackArticles();
+          setArticles(fallbackList);
+          resolveDeepLinkArticle(fallbackList);
+          setIsArticlesLoading(false);
+          return;
+        }
+
+        const data = authResult.data || {};
+        loggedIn = Boolean(data.isLoggedIn && data.user);
+        if (loggedIn) {
           setAdminUser({ ...data.user, isLoggedIn: true });
         } else {
           setAdminUser(null);
           clearAuthToken();
         }
-      })
-      .catch((err) => console.warn('Could not verify server session:', err));
 
-    // 2. Fetch published articles strictly from PostgreSQL Cloud SQL
-    fetch('/api/db/articles')
-      .then((res) => {
-        if (!res.ok) throw new Error('فشل جلب المقالات من قاعدة البيانات PostgreSQL');
-        return res.json();
-      })
-      .then((dbArticles) => {
-        if (Array.isArray(dbArticles)) {
-          setArticles(dbArticles);
-        } else {
-          setArticles([]);
+        // 2. Fetch articles from PostgreSQL (include drafts when logged in as admin)
+        const endpoint = loggedIn ? '/api/db/articles?status=all' : '/api/db/articles';
+        const res = await fetch(endpoint);
+        if (!res || !res.ok || !isJsonResponse(res)) {
+          if (res && (res.status === 404 || !isJsonResponse(res))) {
+            const fallbackList = loadStaticFallbackArticles();
+            setArticles(fallbackList);
+            resolveDeepLinkArticle(fallbackList);
+            setIsArticlesLoading(false);
+            return;
+          }
+          throw new Error('فشل جلب المقالات من قاعدة البيانات PostgreSQL');
         }
+        const dbArticles = await res.json();
+        if (!mounted) return;
+        const normalizedList: Article[] = Array.isArray(dbArticles) ? dbArticles : [];
+        setArticles(normalizedList);
+        try {
+          localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(normalizedList));
+        } catch {}
+        resolveDeepLinkArticle(normalizedList);
         setIsArticlesLoading(false);
       })
       .catch((err) => {
-        console.error('Could not fetch articles from database:', err);
-        setArticlesError('تعذر جلب المقالات من قاعدة البيانات.');
+        if (!mounted) return;
+        console.warn('Database sync fallback active:', err);
+        const fallbackList = loadStaticFallbackArticles();
+        setArticles(fallbackList);
+        resolveDeepLinkArticle(fallbackList);
         setIsArticlesLoading(false);
       });
 
-    // 3. Fetch permanent settings from Cloud SQL
+    // 3. Fetch permanent settings from Cloud SQL when JSON backend exists
     fetch('/api/db/settings')
-      .then((res) => res.json())
+      .then((res) => (res.ok && isJsonResponse(res) ? res.json() : null))
       .then((dbSettings) => {
-        if (dbSettings && dbSettings.blogName) {
+        if (mounted && dbSettings && dbSettings.blogName) {
           setSettings((prev) => ({
             ...prev,
             ...dbSettings,
@@ -302,7 +393,11 @@ export default function App() {
           }));
         }
       })
-      .catch((err) => console.warn('Could not fetch settings from database:', err));
+      .catch((err) => console.warn('Settings sync skipped in static mode:', err));
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // Sync settings to localStorage and HTML direction
@@ -331,19 +426,26 @@ export default function App() {
     }
   }, [adminUser]);
 
-  // Periodically sync articles from Cloud SQL to capture autonomous background publications
+  // Periodically sync articles from Cloud SQL when backend JSON API is active
   useEffect(() => {
     const syncArticlesFromDb = async () => {
       try {
-        const res = await fetch('/api/db/articles');
-        if (res.ok) {
+        const endpoint = adminUserRef.current?.isLoggedIn
+          ? '/api/db/articles?status=all'
+          : '/api/db/articles';
+        const res = await fetch(endpoint);
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        if (res.ok && contentType.includes('application/json')) {
           const dbArticles = await res.json();
           if (Array.isArray(dbArticles)) {
             setArticles(dbArticles);
+            try {
+              localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(dbArticles));
+            } catch {}
           }
         }
       } catch (err) {
-        console.warn('Silent sync error:', err);
+        console.warn('Silent sync note:', err);
       }
     };
 
@@ -357,39 +459,74 @@ export default function App() {
     navigateToTab('article-detail', article);
   };
 
-  // Publish a new article (from smart creator or manual creator in backend)
-  // Strict Directive Rule: Do NOT display article as published before confirmed insertion into PostgreSQL
+  // Publish or save draft article: strict PostgreSQL on Express, localStorage persistence on static Vite/Vercel hosting
   const handlePublishArticle = async (newArticle: Article) => {
+    const persistLocally = (articleToSave: Article) => {
+      const normalized: Article = {
+        ...articleToSave,
+        author: articleToSave.author || {
+          name: 'الحضرى محمود',
+          role: 'استشاري الديكور والدهانات',
+          avatar: '',
+        },
+        tags: Array.isArray(articleToSave.tags) ? articleToSave.tags : [],
+        comments: Array.isArray(articleToSave.comments) ? articleToSave.comments : [],
+      };
+      setArticles((prev) => {
+        const nextList = [normalized, ...prev.filter((a) => a.id !== normalized.id)];
+        try {
+          localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(nextList));
+        } catch {}
+        return nextList;
+      });
+      return { success: true, article: normalized };
+    };
+
+    let res: Response | null = null;
     try {
-      const res = await fetchWithAuth('/api/db/articles', {
+      res = await fetchWithAuth('/api/db/articles', {
         method: 'POST',
         body: JSON.stringify(newArticle),
       });
-      const data = await res.json();
-      const rawArticle = (res.ok && data.article) ? data.article : newArticle;
-      const savedArticle: Article = {
-        ...rawArticle,
-        author: rawArticle.author || {
-          name: rawArticle.authorName || 'الحضرى محمود',
-          role: rawArticle.authorRole || 'استشاري الديكور والدهانات',
-          avatar: '',
-        },
-        tags: Array.isArray(rawArticle.tags) ? rawArticle.tags : [],
-        comments: Array.isArray(rawArticle.comments) ? rawArticle.comments : [],
-      };
-      setArticles((prev) => [savedArticle, ...prev.filter((a) => a.id !== savedArticle.id)]);
-      return { success: true, article: savedArticle };
-    } catch (err: any) {
-      console.warn('Network sync notice during article publish:', err);
-      // Ensure article is preserved in state even if network blip occurs
-      setArticles((prev) => [newArticle, ...prev.filter((a) => a.id !== newArticle.id)]);
-      return { success: true, article: newArticle };
+    } catch {
+      // Static Vite/Vercel without Express backend
+      return persistLocally(newArticle);
     }
+
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (res.status === 404 || !contentType.includes('application/json')) {
+      // Pure static hosting (e.g. Vercel SPA): persist directly to localStorage
+      return persistLocally(newArticle);
+    }
+
+    let data: any = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+
+    if (!res.ok || !data?.success) {
+      const firstValidationErr = Array.isArray(data?.validationErrors) && data.validationErrors.length > 0
+        ? data.validationErrors[0]
+        : '';
+      const errMessage = firstValidationErr || data?.error || `تعذر حفظ المقال في الخادم (HTTP ${res.status})`;
+      throw new Error(errMessage);
+    }
+
+    const rawArticle = data.article || newArticle;
+    return persistLocally(rawArticle);
   };
 
-  // Delete an article (from backend manage articles)
+  // Delete an article (from backend manage articles & localStorage)
   const handleDeleteArticle = async (articleId: string) => {
-    setArticles((prev) => prev.filter((a) => a.id !== articleId));
+    setArticles((prev) => {
+      const nextList = prev.filter((a) => a.id !== articleId);
+      try {
+        localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(nextList));
+      } catch {}
+      return nextList;
+    });
     if (selectedArticle && selectedArticle.id === articleId) {
       setSelectedArticle(null);
       setActiveTab('home');
@@ -398,7 +535,7 @@ export default function App() {
       const res = await fetchWithAuth(`/api/db/articles/${articleId}`, {
         method: 'DELETE',
       });
-      if (!res.ok) {
+      if (!res.ok && res.status !== 404) {
         console.warn('DELETE /api/db/articles failed with status:', res.status);
       }
     } catch (err) {
@@ -495,6 +632,16 @@ export default function App() {
     setAdminUser(user);
     setIsAdminLoginOpen(false);
     setActiveTab('backend');
+    // Fetch all articles including drafts once authenticated as admin (when JSON backend exists)
+    fetch('/api/db/articles?status=all')
+      .then((res) => {
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
+        return res.ok && ct.includes('application/json') ? res.json() : null;
+      })
+      .then((list) => {
+        if (Array.isArray(list)) setArticles(list);
+      })
+      .catch(() => {});
     try {
       window.history.pushState(null, '', '/#backend');
     } catch (_) {}
@@ -568,10 +715,14 @@ export default function App() {
       {/* Main Page Body Protected by ErrorBoundary */}
       <main className="flex-1 max-w-7xl w-full min-w-0 mx-auto px-3 sm:px-8 pt-5 sm:pt-8">
         <ErrorBoundary isRtl={settings.language === 'ar'}>
+          {(() => {
+            const publicArticles = articles.filter((a) => a.status !== 'draft');
+            return (
+              <>
           {/* Public View 1: Home (Main feed with strict 3-10 articles pagination) */}
         {activeTab === 'home' && (
           <HomeView
-            articles={articles}
+            articles={publicArticles}
             settings={settings}
             setActiveTab={(tab) => {
               if (tab === 'settings' || tab === 'smart-creator' || tab === 'manual-creator' || tab === 'auto-publish') {
@@ -591,7 +742,7 @@ export default function App() {
         {/* Public View 2: Articles Archive / Directory */}
         {activeTab === 'articles' && (
           <ArticlesView
-            articles={articles}
+            articles={publicArticles}
             settings={settings}
             categories={CATEGORIES}
             onSelectArticle={handleSelectArticle}
@@ -605,7 +756,7 @@ export default function App() {
           <AboutView
             settings={settings}
             onNavigate={(tab) => navigateToTab(tab)}
-            articlesCount={articles.length}
+            articlesCount={publicArticles.length}
           />
         )}
 
@@ -644,17 +795,20 @@ export default function App() {
             onReset={() => navigateToTab('home')}
           >
             <ArticleDetailView
-              article={selectedArticle || articles[0]}
+              article={selectedArticle || publicArticles[0] || articles[0]}
               settings={settings}
               onBack={() => navigateToTab('home')}
               onSelectArticle={handleSelectArticle}
-              allArticles={articles}
+              allArticles={publicArticles}
               onAddComment={handleAddComment}
               onLikeArticle={handleLikeArticle}
               onBroadcastComplete={handleBroadcastComplete}
             />
           </ErrorBoundary>
         )}
+              </>
+            );
+          })()}
 
         {/* Backend / Admin Portal (Strictly for Owner الحضرى محمود & Supervisors) */}
         {activeTab === 'backend' && (
@@ -814,7 +968,7 @@ export default function App() {
         settings={settings}
         isOpen={isChatBotOpen}
         onClose={() => setIsChatBotOpen(false)}
-        articles={articles}
+        articles={articles.filter((a) => a.status !== 'draft')}
         currentArticle={selectedArticle}
         onSelectArticle={handleSelectArticle}
       />
@@ -822,7 +976,7 @@ export default function App() {
       {/* Screen Reader & Voice Host for the Visually Impaired (on the Right Side of the Screen) */}
       <BlindScreenReader
         settings={settings}
-        articles={articles}
+        articles={articles.filter((a) => a.status !== 'draft')}
         currentArticle={selectedArticle}
         activeTab={activeTab}
         onSelectArticle={handleSelectArticle}

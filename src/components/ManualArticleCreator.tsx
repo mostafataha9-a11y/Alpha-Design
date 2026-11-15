@@ -28,8 +28,25 @@ import {
 } from 'lucide-react';
 import { Article, SiteSettings } from '../types/blog';
 import { CATEGORIES } from '../data/initialData';
-import { fetchWithAuth } from '../utils/apiAuth';
 import { compressImageClient } from '../utils/imageCompression';
+import { countActualWords, sanitizeArticleSlug } from '../utils/articleValidator';
+import {
+  generateSmartArticleWithGeminiClient,
+  formatGeminiArabicError,
+} from '../services/geminiClient';
+import {
+  checkClientImageDuplicates,
+  getUniqueClientDecorReplacement,
+} from '../utils/clientImageCatalog';
+
+const MANUAL_CREATIVE_STYLES = [
+  { id: 'STORYTELLING_SITE', labelAr: 'سرد قصصي ومواقف موقع', labelEn: 'Field Storytelling', tone: 'سرد قصصي واقعي دافئ من قلب الموقع مع حوارات وتفاصيل ملموسة' },
+  { id: 'ARTISAN_INSIDER', labelAr: 'أسرار المعلم وخبرة الورشة', labelEn: 'Artisan Trade Secrets', tone: 'أسرار المعلم المحترف والصانع الخبير مع الأمانة الهندسية' },
+  { id: 'SENSORY_QUIET_LUXURY', labelAr: 'سيكولوجية الفخامة الهادئة', labelEn: 'Sensory Quiet Luxury', tone: 'سيكولوجية الفخامة الهادئة وملمس الأسطح وانعكاس الضوء 3000K' },
+  { id: 'MYTH_BUSTING_CONSULTANCY', labelAr: 'تفنيد الأوهام والأخطاء', labelEn: 'Myth-Busting', tone: 'ماستركلاس استشاري صريح يفند الخرافات الشائعة بأدلة معمارية' },
+  { id: 'REAL_COST_VALUATION', labelAr: 'حسابات التكلفة والجدوى', labelEn: 'Cost & Budget', tone: 'دراسة جدوى وتكلفة واقعية بالأرقام والأسعار الدقيقة لعام 2026' },
+  { id: 'ARTISTIC_ALCHEMY', labelAr: 'كيمياء الألوان 2026', labelEn: 'Color Alchemy', tone: 'كيمياء الألوان الفنية وتأثيرات الجير الصخري والرخام المضيء' },
+];
 
 interface ManualArticleCreatorProps {
   settings: SiteSettings;
@@ -85,52 +102,27 @@ export const ManualArticleCreator: React.FC<ManualArticleCreatorProps> = ({
       return;
     }
 
-    let cancelled = false;
     setIsCheckingImageDup(true);
-
-    fetch('/api/images/check-duplicates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls: [featuredImage.trim()] }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled && data.results && data.results[0]) {
-          setImageDuplicateStatus(data.results[0]);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setIsCheckingImageDup(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const data = checkClientImageDuplicates([featuredImage.trim()]);
+      if (data.results && data.results[0]) {
+        setImageDuplicateStatus(data.results[0]);
+      }
+    } finally {
+      setIsCheckingImageDup(false);
+    }
   }, [featuredImage, isAr]);
 
   const handleAutoReplaceFeaturedImage = async () => {
-    try {
-      const res = await fetch('/api/images/get-unique-replacement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          excludeUrls: [featuredImage],
-          topic: title || category,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.replacement?.url) {
-          setFeaturedImage(data.replacement.url);
-        }
-      }
-    } catch {}
+    const rep = getUniqueClientDecorReplacement([featuredImage], title || category);
+    if (rep?.url) {
+      setFeaturedImage(rep.url);
+    }
   };
 
-  // Word count & reading time
+  // Accurate real word count synced with server validator
   const wordCount = useMemo(() => {
-    return content.trim().split(/\s+/).filter(Boolean).length;
+    return countActualWords(content);
   }, [content]);
 
   const readingTime = useMemo(() => {
@@ -170,6 +162,124 @@ export const ManualArticleCreator: React.FC<ManualArticleCreatorProps> = ({
   const [formError, setFormError] = useState('');
   const [isAiRewriting, setIsAiRewriting] = useState(false);
   const [aiSuccessMsg, setAiSuccessMsg] = useState('');
+  const [selectedCreativeStyle, setSelectedCreativeStyle] = useState('STORYTELLING_SITE');
+
+  // Insert a genuine non-duplicate decor image into the markdown editor
+  const handleInsertDecorImage = async () => {
+    const existingUrls = new Set<string>([featuredImage.trim()]);
+    const matches = content.matchAll(/!\[.*?\]\((https?:\/\/[^\s\)]+)\)/g);
+    for (const m of matches) {
+      if (m[1]) existingUrls.add(m[1].trim());
+    }
+
+    let pickedUrl = '';
+    let pickedCaption = isAr ? 'تصميم ديكور وتشطيبات جدران حديثة بإضاءة دافئة 3000K' : 'Modern interior wall paint and decor design';
+    const rep = getUniqueClientDecorReplacement(Array.from(existingUrls), title || category);
+    if (rep?.url) {
+      pickedUrl = rep.url;
+      if (rep.defaultCaption) pickedCaption = rep.defaultCaption;
+    }
+
+    if (!pickedUrl) {
+      const fallbackDecorImages = [
+        'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1000&q=80',
+        'https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&w=1000&q=80',
+        'https://images.unsplash.com/photo-1598928506311-c55ded91a20c?auto=format&fit=crop&w=1000&q=80',
+      ];
+      pickedUrl = fallbackDecorImages.find((u) => !existingUrls.has(u)) || fallbackDecorImages[0];
+    }
+
+    insertFormatting(`\n![${pickedCaption}](${pickedUrl})\n*${pickedCaption}*\n`);
+  };
+
+  // Shared non-repetitive creative human enrichment (guarantees >= targetWords actual tokens)
+  const enrichManualContent = (baseContent: string, articleTopic: string, targetWords = 1080): string => {
+    const authorSignature = settings.authorName || 'الحضرى محمود';
+    let working = baseContent.trim();
+    if (!working) {
+      working = isAr
+        ? `حين نقف أمام جدار مصمت في بداية أي تشطيب، لا نرى مجرد مساحة إسمنتية، بل نرى مسرحاً للضوء والملمس والسكينة يجمع بين دفء البيت وفخامة التنفيذ المتقن.`
+        : `When facing a blank wall at the start of any finishing project, we see a living canvas of light, texture, and serene modern luxury.`;
+    }
+
+    const blocks = isAr
+      ? [
+          {
+            marker: 'قراءة الضوء الطبيعي واختيار درجات الدهان',
+            text: `\n\n## 1. قراءة الضوء الطبيعي واختيار درجات الدهان في ${articleTopic}\n` +
+              `عند التخطيط لتشطيب الجدران والألوان داخل البيت، تبدأ القصة دائماً من حركة الضوء الطبيعي وزوايا الشمس خلال النهار. اختيار كود الطلاء من كتالوج ورقي تحت إضاءة المعرض كثيراً ما يخدع العين؛ لذلك نوصي دائماً بتطبيق عينة فعلية على متر مربع كامل من الحائط ومراقبتها في الصباح وعند الغروب. بالاعتماد على قاعدة التوزيع اللوني 60-30-10، تمنحك الدرجات الدافئة الهادئة مثل الأوف وايت اللؤلؤي والجريج المتوازن مساحة رحبة مريحة للأعصاب، بينما تأتي الإكسسوارات الخشبية ولمسات اللون التكميلي لتصنع شخصية دافئة وأصيلة في كل ركن.`
+          },
+          {
+            marker: 'دمج بديل الرخام وبديل الخشب وإضاءة 3000K',
+            text: `\n\n## 2. فن دمج بديل الرخام وبديل الخشب مع إضاءة الليد المخفية 3000K\n` +
+              `يمثل المزج الذكي بين ألواح بديل الرخام المعالجة بطبقة حماية UV (سماكة صلبة لا تقل عن 2.8 إلى 3 مم) وشرائح بديل الخشب الرأسية WPC واحدة من أنجح صيحات التشطيب المعماري لعام 2026. الخطوط الرأسية للخشب ترفع السقف بصرياً وتضفي إيقاعاً دافئاً هادئاً، فيما تعكس عروق الرخام النقية ضوء الليد المخفي بدرجة حرارة 3000 كلفن خلف الجدار المحوري لتخرج الصالة بمظهر فندقي متزن دون مبالغة أو إرهاق للميزانية.`
+          },
+          {
+            marker: 'أصول الصنعة في التأسيس ومعالجة الرطوبة',
+            text: `\n\n## 3. أصول الصنعة في تأسيس الحوائط ومعالجة الرطوبة\n` +
+              `جودة الدهان النهائي تقف على أكتاف التأسيس السليم قبل أن يلمس الرول الجدار. خطواتنا الميدانية المعتمدة تبدأ بكشط القشور الضعيفة وفتح المسام بحجر الجلخ، ثم دهان وجه مشبع من السيلر المائي البوليمري المقاوم للأملاح لحبس الرطوبة وتثبيت الحبيبات الرملية. بعد الجفاف التام يتم سحب ثلاث سكاكين معجون متعامدة (رأسياً ثم أفقياً ثم ناعماً) يعقبها تنعيم ميكانيكي بصنفرة 320 تحت كشاف ضوئي مائل 500 واط يكشف أدق التموجات قبل طلاء وجهي الأكريليك النقي القابل للغسيل المتكرر.`
+          },
+          {
+            marker: 'توصيات واستشارات ميدانية من خبير الديكور',
+            text: `\n\n### توصيات واستشارات ميدانية بقلم خبير الديكور ${authorSignature}\n` +
+              `- **افحص رطوبة الحوائط قبل بدء المعجون:** التأكد من جفاف الجدار وعلاج أي مصدر تسريب بجوار الحمامات يوفر عليك تكلفة إعادة التشطيب لاحقاً.\n` +
+              `- **احرص على زمن الجفاف الكافي بين كل سكينة معجون:** العمل على طبقات رطبة يحبس بخار الماء ويؤدي إلى فقاعات وتقشير مبكر.\n` +
+              `- **طابق درجة اللمعان مع وظيفة الفراغ:** استخدم المطفي للأسقف وغرف النوم الهادئة، وربع اللامع أو نصف اللامع القابل للغسيل للممرات وغرف المعيشة.\n` +
+              `- **تجنب الإضاءة البيضاء القاسية 6500K:** اعتمد دائماً درجات 3000K الدافئة أو 4000K المحايدة لإبراز جمال الصبغات اللونية وراحة العين.`
+          },
+          {
+            marker: 'الأسئلة العملية الشائعة بين أصحاب المنازل',
+            text: `\n\n## 4. الأسئلة العملية الشائعة حول الدهانات والديكورات (FAQ)\n` +
+              `**س: ما الفرق الفعلي بين دهان البلاستيك المطفي ونصف اللامع؟**\n` +
+              `ج: الدهان المطفي يخفي عيوب استواء الحوائط ويناسب الأسقف وغرف النوم، أما نصف اللامع فيتميز بصلابة سطحية عالية وسهولة التنظيف بالماء الدافئ والمنظف اللطيف، ما يجعله مثالياً للممرات وصالات الأسرة.\n\n` +
+              `**س: هل يفضل تركيب بديل الخشب والرخام قبل الوجه الأخير من الطلاء؟**\n` +
+              `ج: نعم، الأسلوب الميداني الأدق هو إتمام التأسيس والوجه الأول للدهان، ثم تركيب الألواح بسليكون عظمي نقي، وبعدها تطبيق الوجه النهائي للطلاء لضمان حواف وفواصل فائقة النظافة.\n\n` +
+              `**س: متى يمكن تنظيف الحوائط المدهونة حديثاً دون التأثير على الصبغة؟**\n` +
+              `ج: يجف السطح ظاهرياً في ساعات، لكن التصلب الكيميائي الكامل للفيلم الأكريليكي يكتمل خلال 10 إلى 14 يوماً قبل الغسيل اللطيف بقطعة قطنية ناعمة.`
+          },
+          {
+            marker: 'مراجعة الاستلام الهندسي والحفاظ على الطلاء',
+            text: `\n\n## 5. مراجعة الاستلام الهندسي والحفاظ على الطلاء طويل الأمد\n` +
+              `قبل استلام الشقة بشكل نهائي، نقوم بجولة فحص دقيقة في ضوء النهار الطبيعي ومع تشغيل الإضاءة المخفية للتأكد من نظافة التقاء الألوان عند الوزرات وأحواض الأبواب، وتجانس الملمس على امتداد الجدران دون أي تسييل أو علامات رول. وللمحافظة على هذا الصفاء لسنوات طويلة، يكفي التنظيف الدوري اللطيف والتهوية الجيدة والبعد تماماً عن المواد الكاشطة أو الكلور المركز.`
+          },
+        ]
+      : [
+          {
+            marker: 'Evaluating Natural Light and Color Balance',
+            text: `\n\n## 1. Evaluating Natural Light and Color Balance in ${articleTopic}\n` +
+              `Successful architectural painting starts by observing natural daylight across morning and evening hours before buying full gallons. Testing a full square meter sample on site protects you from cold undertones in north-facing rooms and helps anchor the serene 60-30-10 color harmony.`
+          },
+          {
+            marker: 'Combining PVC Marble, Fluted Wood & 3000K LED',
+            text: `\n\n## 2. Combining PVC Marble, Fluted Wood & 3000K LED\n` +
+              `Pairing 3mm UV-protected PVC marble sheets with WPC fluted timber panels creates a balanced focal wall anchored by warm 3000K indirect lighting profiles without overwhelming the room budget.`
+          },
+          {
+            marker: 'Surface Preparation and Multi-Coat Putty Protocol',
+            text: `\n\n## 3. Surface Preparation & Multi-Coat Putty Protocol\n` +
+              `Long-lasting finishes demand patient preparation: sanding weak plaster, sealing masonry with polymer primer, pulling three cross-hatched coats of fine putty, and inspecting flatness under a 500W raking light before applying two washable acrylic finish coats.`
+          },
+          {
+            marker: 'Field Advice from',
+            text: `\n\n### Practical Field Notes by ${authorSignature}\n` +
+              `- Respect full curing times between putty and finish layers to avoid trapped moisture.\n` +
+              `- Choose dead matte for ceilings, soft satin eggshell for bedrooms, and washable semi-gloss for high-traffic corridors.\n\n` +
+              `## 4. Frequently Asked Questions (FAQ)\n` +
+              `**How long does acrylic interior paint take to cure before gentle washing?**\n` +
+              `Allow 10 to 14 days for full polymer curing before wiping walls with a soft damp microfiber cloth.\n\n` +
+              `**Should decorative wall panels be installed before or after final touch-up coats?**\n` +
+              `Complete priming, puttying, and the first paint coat first, mount decorative panels cleanly second, and finish with crisp edge touch-ups.`
+          },
+        ];
+
+    for (const block of blocks) {
+      if (countActualWords(working) >= targetWords) break;
+      if (!working.includes(block.marker)) {
+        working = `${working}${block.text}`;
+      }
+    }
+    return working;
+  };
 
   const handleAiRewrite = async () => {
     if (!title.trim() && !content.trim()) {
@@ -181,28 +291,27 @@ export const ManualArticleCreator: React.FC<ManualArticleCreatorProps> = ({
     setIsAiRewriting(true);
     setAiSuccessMsg('');
 
-    try {
-      const response = await fetchWithAuth('/api/ai/generate-smart-article', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          images: [
-            {
-              url: featuredImage,
-              caption: title || (isAr ? 'تصميم رقمي معاصر' : 'Modern design figure'),
-            },
-          ],
-          topic: title,
-          draftTitle: title,
-          draftContent: content,
-          tone: 'إبداعي واحترافي بأسلوب بشري',
-          language: settings.language,
-          length: 'medium',
-        }),
-      });
+    const styleObj = MANUAL_CREATIVE_STYLES.find((s) => s.id === selectedCreativeStyle) || MANUAL_CREATIVE_STYLES[0];
+    const currentActualWords = countActualWords(content);
 
-      if (!response.ok) throw new Error('Failed to rewrite');
-      const data = await response.json();
+    try {
+      const data = await generateSmartArticleWithGeminiClient({
+        images: [
+          {
+            url: featuredImage,
+            caption: title || (isAr ? 'تصميم ديكور معاصر — ألفا للديكور والدهانات' : 'Modern interior decor figure'),
+          },
+        ],
+        topic: title.trim(),
+        draftTitle: title.trim(),
+        draftContent: content.trim(),
+        creativeStyle: styleObj.id,
+        tone: styleObj.tone,
+        targetWordCount: Math.max(1250, currentActualWords + 350),
+        language: settings.language,
+        businessLocation: (settings as any)?.businessLocation || null,
+        authorName: settings?.authorName || 'الحضرى محمود',
+      });
 
       if (data.title) setTitle(data.title);
       if (data.content) setContent(data.content);
@@ -212,90 +321,95 @@ export const ManualArticleCreator: React.FC<ManualArticleCreatorProps> = ({
 
       setAiSuccessMsg(
         isAr
-          ? 'تمت إعادة صياغة المقال بنجاح وتطبيقه على معايير السيو والأسلوب البشري! يمكنك مراجعته أو نشره فوراً.'
-          : 'Article rewritten and optimized for Google SEO in a human tone!'
+          ? `تمت إعادة صياغة مسودتك بأسلوب «${styleObj.labelAr}» البشري الإبداعي (${data.actualWordCount || countActualWords(data.content || '')} كلمة) وتهيئتها للسيو وأدسنس! يمكنك المراجعة أو النشر فوراً.`
+          : 'Article rewritten and optimized for Google SEO in a warm creative human tone!'
       );
-    } catch (e) {
+    } catch (e: unknown) {
       console.error(e);
-      setFormError(isAr ? 'تعذر الاتصال بخادم الذكاء الاصطناعي.' : 'Failed to contact AI service.');
+      setFormError(
+        formatGeminiArabicError(e, isAr ? 'تعذر إتمام إعادة الصياغة الذكية' : 'Failed to rewrite with AI')
+      );
     } finally {
       setIsAiRewriting(false);
     }
   };
 
-  // Auto-enrich manual article to guarantee 1000+ words and structure for AdSense
+  // Auto-enrich manual article to guarantee 1050+ actual words and creative structure
   const handleAutoEnrich = () => {
     const rawTitle = title.trim() || (isAr ? 'أسرار دهانات الحوائط والديكورات العصرية وأحدث تشطيبات بديل الرخام' : 'Modern Interior Decor & Paints Guide');
-    const authorSignature = settings.authorName || 'الحضرى محمود';
+    const enrichedContent = enrichManualContent(content, rawTitle, 1120);
+    const enrichedWords = countActualWords(enrichedContent);
 
-    let enriched = content.trim();
-    if (!enriched) {
-      enriched = isAr
-        ? `حين نقف أمام جدار مصمت في بداية أي تشطيب، لا نرى مجرد مساحة إسمنتية، بل نرى مسرحاً للضوء والملمس والسكينة ينبض بالفخامة والراحة النفسية.`
-        : `When facing a blank wall at the start of any finishing project, we see a living canvas of light, texture, and serene modern luxury.`;
-    }
-
-    const enrichmentText = isAr
-      ? `\n\n## 1. أساسيات تنسيق دهانات الحوائط واختيار درجات الألوان العصرية\n` +
-        `عند البدء في تخطيط دهانات الحوائط والديكورات الداخلية، من الضروري مراعاة التوازن البصري بين ألوان الجدران والإضاءة الطبيعية والصناعية. ننصح دائماً بالاعتماد على درجات ألوان محايدة دافئة مثل الجريج (Greige) والأوف وايت المطفي للجدران الأساسية، مع تمييز جدار رئيسي بدرجات أغمق تمنح المكان عمقاً فندقياً راقياً.\n\n` +
-        `## 2. دمج بديل الرخام وبديل الخشب مع شريط الإضاءة المخفية ليد\n` +
-        `تعد ألواح بديل الرخام (PVC Marble Sheet) مع شرائح بديل الخشب (WPC Fluted Panels) من أقوى صيحات الديكور الحديث لعام 2026. يمنح هذا المزيج جدار الصالة أو خلفية التلفزيون فخامة متناهية بتكلفة اقتصادية ووزن خفيف مقارنة بالرخام الطبيعي. وللحصول على مظهر متكامل، يُفضل تمرير بروفايل ليد مخفي بدرجة حرارة لون 3000 كلفن خلف الألواح لإبراز التفاصيل المعمارية الدقيقة.\n\n` +
-        `## 3. خطوات تجهيز الحوائط ومعالجة الرطوبة قبل تطبيق الدهان\n` +
-        `النجاح الحقيقي لأي تشطيب دهان يبدأ من التأسيس الصحيح. تبدأ المرحلة بتنظيف الأسطح وصنفرة الجدران جيداً لإزالة الشوائب، ثم تطبيق طبقة سيلر مائي عازل لمنع امتصاص الدهان ومعالجة الرطوبة السطحية. بعد ذلك يتم سحب طبقتين إلى ثلاث طبقات من معجون الحوائط الناعم مع الصنفرة بين كل طبقة لضمان سطح أملس كالحرير قبل طلاء وجهين من البلاستيك القابل للغسيل.\n\n` +
-        `### توصيات واستشارات فنية من خبير الديكور ${authorSignature}\n` +
-        `يؤكد المهندس الاستشاري ${authorSignature} على ضرورة فحص رطوبة الجدران قبل وضع أي معجون أو دهان، وعدم التهاون في جودة خامات السيلر والدهانات المعتمدة من كبرى الشركات مثل جوتن. التأسيس الممتاز يضمن بقاء ألوان الحوائط ناصعة ومقاومة للتقشير لسنوات طويلة دون الحاجة إلى صيانة مستمرة.\n\n` +
-        `## 4. نصائح للمحافظة على ألوان ودهانات الديكور الداخلي\n` +
-        `- احرص على تنظيف الحوائط بقطع قماش قطنية ناعمة مبللة بالماء الفاتر والصابون الخفيف وتجنب الفرك الخشن.\n` +
-        `- حافظ على تهوية الغرف جيداً بعد انتهاء أعمال الدهان لتسريع جفاف الطبقات الداخلية والتخلص من الروائح.\n` +
-        `- وزع مصادر الإضاءة في الغرفة لتقليل الظلال وإبراز درجات الألوان الطبيعية للحوائط والمفروشات.\n\n` +
-        `## 5. الأسئلة الشائعة حول دهانات وديكورات المنازل (FAQ)\n` +
-        `**س: ما الفرق بين دهان البلاستيك المطفي ودهان نصف اللامع؟**\n` +
-        `ج: الدهان المطفي يخفي عيوب الحوائط ومناسب لغرف النوم ومجالس الضيوف، بينما نصف اللامع يتميز بسهولة التنظيف ومقاومة الاحتكاك مما يجعله مثالياً للممرات وغرف المعيشة والمطابخ.\n\n` +
-        `**س: هل يمكن تركيب بديل الخشب على حوائط مدهونة مسبقاً؟**\n` +
-        `ج: نعم، بشرط أن يكون الدهان القديم متماسكاً وخالياً من الرطوبة أو التقشير، ويتم تثبيته باستخدام السيليكون العظم ومسامير التثبيت الدقيقة لضمان ثبات دائم.`
-      : `\n\n## 1. Fundamentals of Wall Paint Coordination\n` +
-        `Color selection sets the mood for interior living spaces. Modern neutral palettes such as warm greige, soft off-white, and earthy beige provide timeless backdrops that amplify natural daylight.\n\n` +
-        `## 2. Integrating PVC Marble & Fluted Wood Panels\n` +
-        `Combining artificial marble slabs with fluted acoustic wood strips creates an upscale aesthetic for TV walls and entryways, enhanced by 3000K warm LED profile lighting.\n\n` +
-        `## 3. Surface Preparation & Moisture Treatment\n` +
-        `Durable paint jobs require thorough sanding, high-quality primer, and water-resistant putty to safeguard walls against flaking and humidity.`;
-
-    const fullContent = enriched + enrichmentText;
-    setContent(fullContent);
+    setContent(enrichedContent);
     if (!title.trim()) setTitle(rawTitle);
-    if (!excerpt.trim()) setExcerpt(fullContent.slice(0, 160) + '...');
+    if (!excerpt.trim()) {
+      const cleanPreview = enrichedContent.replace(/!\[.*?\]\(.*?\)/g, '').replace(/[#*>_-]/g, '').trim();
+      setExcerpt(cleanPreview.slice(0, 160) + '...');
+    }
     setAiSuccessMsg(
       isAr
-        ? 'تم إثراء وتوسيع المقال بنجاح وإضافة عناوين H2/H3 وتوصيات الحضرى محمود ليتجاوز 1,000 كلمة ويتوافق 100% مع معايير AdSense!'
-        : 'Article enriched to exceed 1,000 words with headings and expert advice!'
+        ? `تم إثراء وتوسيع المقال بأسلوب بشري إبداعي ليصل إلى ${enrichedWords} كلمة فعلية مع عناوين H2/H3 وتوصيات الحضرى محمود ليتوافق 100% مع معايير AdSense!`
+        : `Article enriched cleanly to ${enrichedWords} actual words with structured headings and expert insights!`
     );
     setFormError('');
   };
 
   const handlePublish = async (status: 'published' | 'draft' = 'published') => {
-    if (!title.trim() || !content.trim()) {
-      setFormError(isAr ? 'يرجى كتابة عنوان المقال ومحتواه على الأقل.' : 'Please provide at least a title and content.');
+    setFormError('');
+    setPublishedPost(null);
+
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      setFormError(isAr ? 'يرجى كتابة عنوان المقال أولاً.' : 'Please enter an article title.');
+      return;
+    }
+    if (status === 'draft' && trimmedTitle.length < 3) {
+      setFormError(isAr ? 'عنوان المسودة قصير جداً (يجب ألا يقل عن 3 أحرف).' : 'Draft title must be at least 3 characters.');
+      return;
+    }
+    if (status === 'published' && trimmedTitle.length < 10) {
+      setFormError(isAr ? 'عنوان المقال للنشر قصير جداً (يجب ألا يقل عن 10 أحرف).' : 'Published article title must be at least 10 characters.');
       return;
     }
 
     let finalContent = content.trim();
-    if (status === 'published' && wordCount < 1000) {
-      const decorEnrichment = `\n\n## إرشادات وتوصيات استشاري الديكور الحضرى محمود لعام 2026\nيؤكد المهندس الاستشاري الحضرى محمود من واقع مئات المشروعات المعمارية المنفذة في «ألفا للديكور والدهانات» على أن نجاح أي ديكور داخلي يعتمد على التناغم الهندسي بين لون الطلاء وملمس الجدار ونوعية الإضاءة.\n\n### بروتوكول تأسيس الحوائط ومعالجة الرطوبة\n1. كشط الطبقات الضعيفة وتطبيق سيلر مائي بوليمري عازل لاختراق المسام ومنع التمليح وحبس الرطوبة.\n2. سحب ثلاث سكاكين معجون ناعم متقاطع مع الصنفرة تحت كشاف ضوئي مائل لكشف أي تموج مجهري.\n3. تطبيق طبقتين من دهان الأكريليك الفاخر نصف اللامع القابل للغسيل ومقاوم البقع والفرك المتكرر.\n\n### نصائح تنسيق الإضاءة وتدرجات الألوان الفندقية\n- احرص على استخدام إضاءة دافئة 3000 كلفن أو حيادية 4000 كلفن؛ فالإضاءة الباردة تقتل دفء الطلاء وتسبب إجهاداً عصبياً.\n- دمج درجات الأوف وايت والجريج مع شرائح بديل الخشب وبديل الرخام يمنح الصالة اتساعاً وفخامة فندقية لا مثيل لها.\n\n## أسئلة متكررة تهم كل مقبل على تشطيب منزله (FAQ)\n**س: كيف أحافظ على ثبات ألوان الدهانات لسنوات طويلة؟**\nج: التأسيس الممتاز واستخدام دهانات أكريليكية قابلة للغسيل والتنظيف بقطع قماش قطنية ناعمة يضمن بقاء ألوان حوائطك براقة وجديدة.\n\n**س: هل يناسب دهان الجريج المساحات الضيقة؟**\nج: نعم، الجريج الفاتح يعكس الضوء بانتظام ويمنح شعوراً ملموساً باتساع الفراغ وانسيابية الرؤية.`;
-      finalContent += decorEnrichment;
-      setContent(finalContent);
-      setAiSuccessMsg(isAr ? 'تم استكمال وإثراء المقال بنصائح الحضرى محمود ليتجاوز 1,000 كلمة ونشره بنجاح!' : 'Auto-enriched to 1,000+ words and published!');
+    if (!finalContent) {
+      setFormError(isAr ? 'يرجى كتابة محتوى المقال أولاً.' : 'Please write the article content.');
+      return;
     }
 
-    setFormError('');
+    const currentWords = countActualWords(finalContent);
+    if (status === 'draft' && currentWords < 10) {
+      setFormError(
+        isAr
+          ? `المسودة قصيرة جداً (${currentWords} كلمة). يرجى كتابة 10 كلمات على الأقل لحفظ المسودة.`
+          : `Draft is too short (${currentWords} words). Write at least 10 words to save a draft.`
+      );
+      return;
+    }
+
+    if (status === 'published' && currentWords < 1020) {
+      finalContent = enrichManualContent(finalContent, trimmedTitle, 1080);
+      setContent(finalContent);
+      setAiSuccessMsg(
+        isAr
+          ? `تم استكمال وإثراء المقال إبداعياً ليبلغ ${countActualWords(finalContent)} كلمة فعلية متوافقة مع AdSense وجاري نشره الآن!`
+          : `Auto-enriched to ${countActualWords(finalContent)} actual words for AdSense and publishing now!`
+      );
+    }
+
     setIsPublishing(true);
 
     const finalCategory = newCatInput.trim() ? newCatInput.trim() : category;
+    const finalWords = countActualWords(finalContent);
+    const finalReadingTime = Math.max(1, Math.ceil(finalWords / 200));
+    const cleanAutoExcerpt = finalContent.replace(/!\[.*?\]\(.*?\)/g, '').replace(/[#*>_-]/g, '').trim().slice(0, 160) + '...';
 
     const newArticle: Article = {
       id: 'manual-post-' + Date.now(),
-      title: title.trim(),
-      slug: title.trim().toLowerCase().replace(/[\s/\\?#%]+/g, '-').replace(/-+/g, '-').slice(0, 60),
-      excerpt: excerpt.trim() || content.slice(0, 160) + '...',
+      title: trimmedTitle,
+      slug: sanitizeArticleSlug(trimmedTitle),
+      excerpt: excerpt.trim() || cleanAutoExcerpt,
       content: finalContent,
       featuredImage: featuredImage.trim(),
       author: {
@@ -306,21 +420,25 @@ export const ManualArticleCreator: React.FC<ManualArticleCreatorProps> = ({
       category: finalCategory,
       tags: tagsList,
       publishedAt: new Date().toISOString(),
-      readingTime,
+      readingTime: finalReadingTime,
       views: 1,
       likes: 0,
       comments: [],
       status,
-      seoScore: 96,
+      seoScore: status === 'published' ? 96 : 75,
       rewrittenByAi: false,
     };
 
     try {
-      await onPublishArticle(newArticle);
-      setPublishedPost(newArticle);
+      const pubRes = await onPublishArticle(newArticle);
+      const persisted = (pubRes as any)?.article || newArticle;
+      setPublishedPost({
+        ...persisted,
+        author: persisted.author || newArticle.author,
+      });
     } catch (err: any) {
       console.error('Failed to publish manual article:', err);
-      setFormError(err.message || (isAr ? 'فشل حفظ ونشر المقال في الخادم.' : 'Failed to publish article.'));
+      setFormError(err.message || (isAr ? 'فشل حفظ ونشر المقال في قاعدة البيانات.' : 'Failed to publish article.'));
     } finally {
       setIsPublishing(false);
     }
@@ -374,33 +492,65 @@ export const ManualArticleCreator: React.FC<ManualArticleCreatorProps> = ({
       </div>
 
       {publishedPost && (
-        <div className="p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in">
+        <div
+          className={`p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in ${
+            publishedPost.status === 'draft'
+              ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800'
+              : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800'
+          }`}
+        >
           <div className="flex items-center gap-3">
-            <CheckCircle className="w-6 h-6 text-emerald-500 shrink-0" />
+            <CheckCircle
+              className={`w-6 h-6 shrink-0 ${
+                publishedPost.status === 'draft' ? 'text-amber-500' : 'text-emerald-500'
+              }`}
+            />
             <div>
               <div className="flex items-center gap-2 mb-0.5">
-                <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">
-                  {isAr ? 'منشور ومعتمد' : 'Published'}
+                <span
+                  className={`px-2 py-0.5 rounded-full text-white text-[10px] font-bold ${
+                    publishedPost.status === 'draft' ? 'bg-amber-600' : 'bg-emerald-600'
+                  }`}
+                >
+                  {publishedPost.status === 'draft'
+                    ? (isAr ? 'مسودة محفوظة' : 'Draft Saved')
+                    : (isAr ? 'منشور ومعتمد' : 'Published')}
                 </span>
-                <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                  {isAr ? 'تم نشر مقالك بنجاح في صفحات نشر المقالات بالمدونة!' : 'Article Published Successfully to Live Blog!'}
+                <span
+                  className={`text-xs font-bold ${
+                    publishedPost.status === 'draft'
+                      ? 'text-amber-900 dark:text-amber-200'
+                      : 'text-emerald-900 dark:text-emerald-200'
+                  }`}
+                >
+                  {publishedPost.status === 'draft'
+                    ? (isAr ? 'تم حفظ المسودة في قاعدة البيانات ولن تظهر للزوار حتى تنشرها!' : 'Draft saved privately to database!')
+                    : (isAr ? 'تم نشر مقالك بنجاح في صفحات نشر المقالات بالمدونة!' : 'Article Published Successfully to Live Blog!')}
                 </span>
               </div>
-              <p className="text-xs text-emerald-700 dark:text-emerald-300 font-medium">
+              <p
+                className={`text-xs font-medium ${
+                  publishedPost.status === 'draft'
+                    ? 'text-amber-700 dark:text-amber-300'
+                    : 'text-emerald-700 dark:text-emerald-300'
+                }`}
+              >
                 «{publishedPost.title}»
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => onViewArticle(publishedPost)}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
-            >
-              <Eye className="w-4 h-4" />
-              <span>{isAr ? '👁️ مشاهدة المقال في صفحة المقال' : 'View Article on Blog'}</span>
-            </button>
-          </div>
+          {publishedPost.status !== 'draft' && (
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => onViewArticle(publishedPost)}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Eye className="w-4 h-4" />
+                <span>{isAr ? '👁️ مشاهدة المقال في صفحة المقال' : 'View Article on Blog'}</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -524,13 +674,9 @@ export const ManualArticleCreator: React.FC<ManualArticleCreatorProps> = ({
                   <span className="w-px h-4 bg-slate-300 dark:bg-slate-600 mx-1"></span>
                   <button
                     type="button"
-                    onClick={() =>
-                      insertFormatting(
-                        '\n![شرح توضيحي للصورة](https://images.unsplash.com/photo-1507238691740-187a5b1d37b8?auto=format&fit=crop&w=1000&q=80)\n*شرح توضيحي للصورة*\n'
-                      )
-                    }
-                    className="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1 text-xs"
-                    title={isAr ? 'إدراج صورة مع شرح' : 'Insert image with caption'}
+                    onClick={handleInsertDecorImage}
+                    className="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1 text-xs cursor-pointer"
+                    title={isAr ? 'إدراج صورة ديكور فريدة مع شرح' : 'Insert unique decor image with caption'}
                   >
                     <ImageIcon className="w-4 h-4 text-blue-500" />
                     <span>{isAr ? 'إدراج صورة' : 'Image'}</span>
@@ -594,6 +740,25 @@ export const ManualArticleCreator: React.FC<ManualArticleCreatorProps> = ({
               </h3>
 
               <div className="space-y-2">
+                {/* Creative Human Writing Angle Selector for AI Rewrite */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2">
+                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                    <span>{isAr ? 'نبرة وأسلوب الصياغة البشرية الإبداعية:' : 'Creative Human Rewrite Angle:'}</span>
+                  </label>
+                  <select
+                    value={selectedCreativeStyle}
+                    onChange={(e) => setSelectedCreativeStyle(e.target.value)}
+                    className="w-full text-xs p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none"
+                  >
+                    {MANUAL_CREATIVE_STYLES.map((st) => (
+                      <option key={st.id} value={st.id}>
+                        {isAr ? st.labelAr : st.labelEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 {/* 1-Click Auto-Enrich Button */}
                 <button
                   type="button"

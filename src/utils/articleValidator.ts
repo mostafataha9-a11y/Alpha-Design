@@ -14,6 +14,25 @@ export function countActualWords(text: string): number {
   return tokens.length;
 }
 
+/**
+ * Generates a clean, URL-safe slug without leading/trailing hyphens or empty values.
+ */
+export function sanitizeArticleSlug(rawInput: string, fallbackPrefix = 'decor-post'): string {
+  const normalized = String(rawInput || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s/\\?#%&"'`~!@$^*()+=[\]{}|;:,<>،؛؟]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    .replace(/-+$/g, '');
+
+  if (!normalized || normalized.length < 2) {
+    return `${fallbackPrefix}-${Date.now()}`;
+  }
+  return normalized;
+}
+
 export interface ValidationResult {
   valid: boolean;
   actualWordCount: number;
@@ -90,11 +109,14 @@ export function validateArticlePayload(
   const content = (article.content || '').trim();
   const excerpt = (article.excerpt || '').trim();
 
+  const isDraft = article.status === 'draft';
+
   // 1. Title validation
+  const minTitleLength = isDraft ? 3 : 10;
   if (!title) {
     errors.push('عنوان المقال مطلوب ولا يمكن تركه فارغاً.');
-  } else if (title.length < 10) {
-    errors.push('عنوان المقال قصير جداً (يجب ألا يقل عن 10 أحرف).');
+  } else if (title.length < minTitleLength) {
+    errors.push(`عنوان المقال قصير جداً (يجب ألا يقل عن ${minTitleLength} أحرف).`);
   }
 
   // 2. Content presence
@@ -103,7 +125,6 @@ export function validateArticlePayload(
   }
 
   // 3. Word count validation (from actual text, not model metadata)
-  const isDraft = article.status === 'draft';
   const actualWordCount = countActualWords(content);
   const effectiveMinWords = isDraft ? 10 : minWords;
 
@@ -119,11 +140,15 @@ export function validateArticlePayload(
     );
   }
 
-  // 4. Decor & Paints Specialization Check
+  // 4. Decor & Paints Specialization Check (strict for published; soft warning for drafts)
   const combinedText = `${title} ${excerpt} ${content}`.toLowerCase();
   const hasSpecialization = DECOR_PAINTS_KEYWORDS.some((kw) => combinedText.includes(kw));
   if (!hasSpecialization) {
-    errors.push('المقال يفتقر إلى تخصص المدونة الحصري (الديكور والدهانات والتشطيبات المعمارية).');
+    if (isDraft) {
+      warnings.push('يُفضّل تضمين مصطلحات متخصصة في الديكور والدهانات والتشطيبات المعمارية قبل النشر النهائي.');
+    } else {
+      errors.push('المقال يفتقر إلى تخصص المدونة الحصري (الديكور والدهانات والتشطيبات المعمارية).');
+    }
   }
 
   // 5. Structure & Headings Check (Required for published articles)

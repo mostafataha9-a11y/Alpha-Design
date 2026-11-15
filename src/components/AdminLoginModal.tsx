@@ -215,7 +215,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
     setIsVerifying(true);
     try {
-      let res;
+      let res: { ok: boolean; status: number; data: Record<string, any> | null };
       try {
         res = await postAuthJson('/api/auth/login', {
           email: cleanEmail,
@@ -325,7 +325,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
     setIsVerifying(true);
     try {
-      let res;
+      let res: { ok: boolean; status: number; data: Record<string, any> | null };
       try {
         res = await postAuthJson('/api/auth/login/verify-code', {
           challengeId,
@@ -410,7 +410,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     setIsResending(true);
 
     try {
-      let res;
+      let res: { ok: boolean; status: number; data: Record<string, any> | null };
       try {
         res = await postAuthJson('/api/auth/login/resend-code', { challengeId });
         if (!res || !res.ok) throw new Error('API route unavailable');
@@ -507,7 +507,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
     setIsVerifying(true);
     try {
-      let res;
+      let res: { ok: boolean; status: number; data: Record<string, any> | null };
       try {
         res = await postAuthJson('/api/auth/change-password', {
           currentPassword: trimmedCurrent,

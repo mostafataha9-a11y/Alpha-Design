@@ -86,13 +86,15 @@ export const VERIFIED_GROQ_MODELS = [
   'mixtral-8x7b-32768',
 ];
 
-// Verified Gemini models
+// Verified Gemini models (aligned with @google/genai current active models)
 export const VERIFIED_GEMINI_MODELS = [
-  'gemini-3.8-flash',
+  'gemini-4-hydrogen',
+  'gemini-4-argon',
   'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
 ];
 
-const DEFAULT_TIMEOUT_MS = 35000;
+const DEFAULT_TIMEOUT_MS = 45000;
 
 /**
  * Resolves safe, verified model for the given provider.
@@ -125,7 +127,7 @@ export function resolveModelForProvider(provider: AiProvider, requestedModel?: s
     if (envModel && VERIFIED_GEMINI_MODELS.includes(envModel)) {
       return envModel;
     }
-    return VERIFIED_GEMINI_MODELS[0]; // 'gemini-3.8-flash'
+    return VERIFIED_GEMINI_MODELS[0]; // 'gemini-4-hydrogen'
   }
 }
 
@@ -196,87 +198,107 @@ async function callGemini(options: AiGenerateOptions): Promise<{ text: string; m
     throw new Error('Gemini API is not configured: GEMINI_API_KEY is missing on server.');
   }
 
-  const modelName = resolveModelForProvider('gemini', options.model);
+  const primaryModelName = resolveModelForProvider('gemini', options.model);
   const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
 
   const ai = new GoogleGenAI({
     apiKey,
     httpOptions: {
       headers: {
-        'User-Agent': 'aistudio-build-alphadecor',
+        'User-Agent': 'aistudio-build',
       },
     },
   });
 
-  const abortController = new AbortController();
-  let timedOut = false;
-  const timeoutTimer = setTimeout(() => {
-    timedOut = true;
-    abortController.abort();
-  }, timeoutMs);
+  const candidateModels = options.model
+    ? [primaryModelName]
+    : Array.from(new Set([primaryModelName, 'gemini-2.5-flash']));
 
-  try {
-    const config: any = {
-      temperature: options.temperature ?? 0.7,
-    };
-
-    if (options.systemInstruction) {
-      config.systemInstruction = options.systemInstruction;
+  let contentsPayload: any = options.prompt;
+  if (options.images && options.images.length > 0) {
+    const parts: any[] = [];
+    for (const img of options.images) {
+      if (img.data && img.mimeType) {
+        parts.push({
+          inlineData: {
+            mimeType: img.mimeType,
+            data: img.data,
+          },
+        });
+      }
     }
+    parts.push({ text: options.prompt });
+    contentsPayload = { parts };
+  }
 
-    if (options.responseJson) {
-      config.responseMimeType = 'application/json';
-    }
+  let lastError: Error | null = null;
 
-    if (options.maxTokens) {
-      config.maxOutputTokens = options.maxTokens;
-    }
+  for (const modelName of candidateModels) {
+    const abortController = new AbortController();
+    let timedOut = false;
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+    }, timeoutMs);
 
-    let contentsPayload: any = options.prompt;
-    if (options.images && options.images.length > 0) {
-      const parts: any[] = [];
-      for (const img of options.images) {
-        if (img.data && img.mimeType) {
-          parts.push({
-            inlineData: {
-              mimeType: img.mimeType,
-              data: img.data,
-            },
+    try {
+      const config: Record<string, any> = {};
+      const isGemini4 = modelName.startsWith('gemini-4');
+
+      // Do not pass deprecated sampling parameters (temperature, topP, topK) to gemini-4-*
+      if (!isGemini4 && typeof options.temperature === 'number') {
+        config.temperature = options.temperature;
+      }
+
+      if (options.systemInstruction) {
+        config.systemInstruction = options.systemInstruction;
+      }
+
+      if (options.responseJson) {
+        config.responseMimeType = 'application/json';
+      }
+
+      if (!isGemini4 && options.maxTokens) {
+        config.maxOutputTokens = options.maxTokens;
+      }
+
+      const response = await Promise.race([
+        ai.models.generateContent({
+          model: modelName,
+          contents: contentsPayload,
+          config,
+        }),
+        new Promise<never>((_, reject) => {
+          abortController.signal.addEventListener('abort', () => {
+            reject(new Error(`Gemini request timed out after ${timeoutMs}ms`));
           });
+        }),
+      ]);
+
+      const text = response.text || '';
+      if (!text.trim()) {
+        throw new Error('Gemini returned an empty response text.');
+      }
+
+      return { text, modelUsed: modelName };
+    } catch (err: any) {
+      if (timedOut) {
+        lastError = new Error(`Gemini request timed out after ${timeoutMs}ms`);
+      } else {
+        const rawMsg = err?.message || String(err);
+        const sanitizedMsg = rawMsg.replace(/AIza[a-zA-Z0-9_\-]{30,}/g, '[REDACTED_API_KEY]');
+        lastError = new Error(`[Gemini Error] ${sanitizedMsg}`);
+        // If API key itself is invalid or permission denied, do not retry another Gemini model
+        if (/API_KEY_INVALID|PERMISSION_DENIED|403|401/i.test(rawMsg)) {
+          throw lastError;
         }
       }
-      parts.push({ text: options.prompt });
-      contentsPayload = { parts };
+    } finally {
+      clearTimeout(timeoutTimer);
     }
-
-    const response = await Promise.race([
-      ai.models.generateContent({
-        model: modelName,
-        contents: contentsPayload,
-        config,
-      }),
-      new Promise<never>((_, reject) => {
-        abortController.signal.addEventListener('abort', () => {
-          reject(new Error(`Gemini request timed out after ${timeoutMs}ms`));
-        });
-      }),
-    ]);
-
-    const text = response.text || '';
-    if (!text.trim()) {
-      throw new Error('Gemini returned an empty response text.');
-    }
-
-    return { text, modelUsed: modelName };
-  } catch (err: any) {
-    if (timedOut) {
-      throw new Error(`Gemini request timed out after ${timeoutMs}ms`);
-    }
-    const sanitizedMsg = err.message ? err.message.replace(/AIza[a-zA-Z0-9_\-]{30,}/g, '[REDACTED_API_KEY]') : String(err);
-    throw new Error(`[Gemini Error] ${sanitizedMsg}`);
-  } finally {
-    clearTimeout(timeoutTimer);
   }
+
+  throw lastError || new Error('[Gemini Error] Failed to generate content.');
 }
 
 /**

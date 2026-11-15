@@ -475,7 +475,12 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
             settings={settings}
             onPublishArticle={async (newArt) => {
               const res = await onPublishArticle(newArt);
-              triggerToast(isAr ? `تم حفظ ونشر مقال «${newArt.title}» في صفحات المدونة بنجاح!` : `Article published to blog successfully!`);
+              const isDraft = newArt.status === 'draft';
+              triggerToast(
+                isDraft
+                  ? (isAr ? `تم حفظ مسودة «${newArt.title}» في قاعدة البيانات بنجاح!` : `Draft "${newArt.title}" saved successfully!`)
+                  : (isAr ? `تم حفظ ونشر مقال «${newArt.title}» في صفحات المدونة بنجاح!` : `Article published to blog successfully!`)
+              );
               return res;
             }}
             onViewArticle={onViewArticle}
@@ -658,11 +663,18 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
                             <span className="font-bold text-slate-900 dark:text-white block truncate">
                               {art.title}
                             </span>
-                            {art.isAutoPublished && (
-                              <span className="inline-block text-[9px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-1.5 rounded">
-                                نشر آلي 24h
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1 mt-0.5">
+                              {art.status === 'draft' && (
+                                <span className="inline-block text-[9px] text-amber-700 dark:text-amber-300 font-bold bg-amber-100 dark:bg-amber-950/60 px-1.5 rounded">
+                                  {isAr ? 'مسودة' : 'Draft'}
+                                </span>
+                              )}
+                              {art.isAutoPublished && (
+                                <span className="inline-block text-[9px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-1.5 rounded">
+                                  نشر آلي 24h
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>

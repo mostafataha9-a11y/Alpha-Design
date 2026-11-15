@@ -25,7 +25,8 @@ import {
   validateDbSession,
 } from '../db/repo.ts';
 import { requireAdminAuth } from './authRoutes.ts';
-import { validateArticlePayload } from '../utils/articleValidator.ts';
+import { validateArticlePayload, sanitizeArticleSlug } from '../utils/articleValidator.ts';
+import { buildCreativeHumanEnrichment } from './fallbackArticleTemplates.ts';
 
 export const dbRouter = Router();
 
@@ -55,26 +56,34 @@ dbRouter.get('/api/db/articles', async (req: Request, res: Response) => {
 
 dbRouter.post('/api/db/articles', async (req: Request, res: Response) => {
   try {
-    const payload = req.body;
+    const payload = { ...req.body };
+    if (payload.title || payload.slug) {
+      payload.slug = sanitizeArticleSlug(payload.slug || payload.title || 'decor-post');
+    }
     let validation = validateArticlePayload(payload);
 
-    if (!validation.valid) {
-      // If content is between 500 and 1000 words from creator, auto-enrich to fulfill 1000+ words standard
+    if (!validation.valid && payload.status !== 'draft') {
+      // If published content is between 500 and 1000 words from creator, enrich with non-duplicate creative human sections
       if (payload.title && payload.content && validation.actualWordCount >= 500 && validation.actualWordCount < 1000) {
-        payload.content = payload.content + '\n\n' +
-          '## إرشادات معمارية ومعايير الجودة التنفيذية لتشطيب الحوائط\n' +
-          'لضمان استدامة الدهانات وجودة المظهر النهائي، يوصى دائماً باختيار خامات دهانات معتمدة خالية من المركبات العضوية المتطايرة (Low VOC)، واستخدام معجون بوليمري فائق النعومة مع مراعاة درجة حرارة الغرفة ونسبة الرطوبة أثناء التطبيق. كما يفضل توفير إضاءة طبيعية أو كشافات دافئة (3000K) أثناء مراحل الصنفرة النهائية لضمان استواء السطح التام وعدم ظهور أي تموجات ظلّية تحت الإضاءة المباشرة.\n\n' +
-          '### جدول التوزيع اللوني وتوافق الإضاءة\n' +
-          '- **الدهانات المطفية:** مثالية للأسقف وغرف النوم الهادئة لإخفاء عيوب اللياسة.\n' +
-          '- **الدهانات نصف اللمعة:** الاختيار الأمثل للممرات وغرف المعيشة لسهولة التنظيف ومقاومة الاحتكاك اليومي.\n' +
-          '- **بديل الرخام وبديل الخشب:** عناصر إكساء تكميلية تمنح الفراغ فخامة استثنائية وعزلاً صوتياً متطوراً.';
-        validation = validateArticlePayload(payload);
+        const extra = buildCreativeHumanEnrichment({
+          topic: payload.title,
+          existingContent: payload.content,
+          targetWordCount: 1080,
+          authorName: payload.author?.name || 'الحضرى محمود',
+        });
+        if (extra) {
+          payload.content = `${payload.content.trim()}\n${extra}`;
+          validation = validateArticlePayload(payload);
+        }
       }
     }
 
     if (!validation.valid) {
       return res.status(400).json({
-        error: 'بيانات المقال غير مطابقة لمعايير الجودة والنشر (الحد الأدنى 1000 كلمة لمكافحة المحتوى النحيف).',
+        error:
+          payload.status === 'draft'
+            ? 'تعذر حفظ المسودة: تأكد من كتابة عنوان (3 أحرف+) ومحتوى (10 كلمات+).'
+            : 'بيانات المقال غير مطابقة لمعايير الجودة والنشر (الحد الأدنى 1000 كلمة لمكافحة المحتوى النحيف).',
         validationErrors: validation.errors,
       });
     }
@@ -84,11 +93,14 @@ dbRouter.post('/api/db/articles', async (req: Request, res: Response) => {
       success: true,
       article: created,
       validation,
-      message: 'تم حفظ ونشر المقال في قاعدة البيانات بنجاح.',
+      message:
+        created.status === 'draft'
+          ? 'تم حفظ المسودة في قاعدة البيانات بنجاح.'
+          : 'تم حفظ ونشر المقال في قاعدة البيانات بنجاح.',
     });
   } catch (err: any) {
     console.error('API POST /api/db/articles error:', err);
-    res.status(500).json({ error: 'فشل حفظ المقال في قاعدة البيانات.' });
+    res.status(500).json({ error: 'فشل حفظ المقال في قاعدة البيانات: ' + (err?.message || '') });
   }
 });
 

@@ -37,7 +37,17 @@ import {
 import { Article, SiteSettings, BroadcastHistoryItem } from '../types/blog';
 import { SocialBroadcastModal } from './SocialBroadcastModal';
 import { compressImageClient } from '../utils/imageCompression';
-import { fetchWithAuth } from '../utils/apiAuth';
+import { sanitizeArticleSlug } from '../utils/articleValidator';
+import {
+  generateSmartArticleWithGeminiClient,
+  getClientGeminiStatus,
+  formatGeminiArabicError,
+} from '../services/geminiClient';
+import {
+  getClientCatalogStatus,
+  checkClientImageDuplicates,
+  getUniqueClientDecorReplacement,
+} from '../utils/clientImageCatalog';
 
 interface SmartArticleCreatorProps {
   settings: SiteSettings;
@@ -221,14 +231,11 @@ export const SmartArticleCreator: React.FC<SmartArticleCreatorProps> = ({
   const [duplicateAlertBanner, setDuplicateAlertBanner] = useState<string | null>(null);
   const [isAutoReplacingAll, setIsAutoReplacingAll] = useState(false);
 
-  // Load catalog status
+  // Load catalog status directly from client-side curated decor catalog
   const refreshCatalogStatus = React.useCallback(async () => {
     try {
-      const res = await fetch('/api/images/catalog-status');
-      if (res.ok) {
-        const data = await res.json();
-        setCatalogStatus(data);
-      }
+      const data = getClientCatalogStatus();
+      setCatalogStatus(data);
     } catch {}
   }, []);
 
@@ -236,7 +243,7 @@ export const SmartArticleCreator: React.FC<SmartArticleCreatorProps> = ({
     refreshCatalogStatus();
   }, [refreshCatalogStatus]);
 
-  // Scan current images for duplicates against all published articles & batch
+  // Scan current images for duplicates against published articles & batch
   const scanImagesForDuplicates = React.useCallback(async (imageList: UploadedImageItem[]) => {
     if (imageList.length === 0) {
       setDuplicateStatusMap({});
@@ -246,66 +253,18 @@ export const SmartArticleCreator: React.FC<SmartArticleCreatorProps> = ({
 
     setIsCheckingDuplicates(true);
     try {
-      const seenUrls = new Set<string>();
-      const initialMap: Record<string, any> = {};
+      const checkRes = checkClientImageDuplicates(imageList.map((i) => i.url));
+      const nextMap: Record<string, any> = {};
       let duplicateCount = 0;
-      const urlsToCheckWithServer: string[] = [];
 
-      for (const item of imageList) {
-        const u = (item.url || '').trim();
-        if (!u) continue;
-
-        if (seenUrls.has(u)) {
-          duplicateCount++;
-          initialMap[u] = {
-            url: u,
-            isDuplicate: true,
-            status: 'duplicate_in_batch',
-            reason: isAr
-              ? 'الصورة مكررة داخل نفس المقال (تم إدراجها أكثر من مرة).'
-              : 'Image duplicated inside this article.',
-          };
-        } else {
-          seenUrls.add(u);
-          if (u.startsWith('data:')) {
-            // Local file uploads are inherently unique unless duplicated within the batch
-            initialMap[u] = {
-              url: u,
-              isDuplicate: false,
-              status: 'unique',
-              reason: isAr
-                ? 'صورة مرفوعة محلياً فريدة وحصرية.'
-                : 'Locally uploaded unique image.',
-            };
-          } else {
-            urlsToCheckWithServer.push(u);
-          }
+      for (const item of checkRes.results) {
+        if (item.url) {
+          nextMap[item.url] = item;
+          if (item.isDuplicate) duplicateCount++;
         }
       }
 
-      if (urlsToCheckWithServer.length > 0) {
-        const res = await fetch('/api/images/check-duplicates', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            urls: urlsToCheckWithServer,
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.results)) {
-            data.results.forEach((item: any) => {
-              if (item.url) {
-                initialMap[item.url] = item;
-                if (item.isDuplicate) duplicateCount++;
-              }
-            });
-          }
-        }
-      }
-
-      setDuplicateStatusMap(initialMap);
+      setDuplicateStatusMap(nextMap);
       if (duplicateCount > 0) {
         setDuplicateAlertBanner(
           isAr
@@ -332,67 +291,65 @@ export const SmartArticleCreator: React.FC<SmartArticleCreatorProps> = ({
   const handleAutoReplaceImage = async (imageId: string, extraExcludes: string[] = []): Promise<string | null> => {
     try {
       const allCurrentUrls = [...images.map((i) => i.url), ...extraExcludes];
-      const res = await fetch('/api/images/get-unique-replacement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          excludeUrls: allCurrentUrls,
-          topic: topic || focusKeyword,
-        }),
-      });
+      const rep = getUniqueClientDecorReplacement(allCurrentUrls, topic || focusKeyword);
+      if (!rep) throw new Error('No replacement found in catalog');
 
-      if (!res.ok) throw new Error('No replacement found in catalog');
-      const data = await res.json();
-      if (data.replacement) {
-        const rep = data.replacement;
-        setImages((prev) =>
-          prev.map((img) => {
-            if (img.id === imageId) {
-              return {
-                ...img,
-                url: rep.url,
-                caption: img.caption?.trim() ? img.caption : rep.defaultCaption,
-                isDuplicate: false,
-              };
-            }
-            return img;
-          })
-        );
-        refreshCatalogStatus();
-        return rep.url;
-      }
+      setImages((prev) =>
+        prev.map((img) => {
+          if (img.id === imageId) {
+            return {
+              ...img,
+              url: rep.url,
+              caption: img.caption?.trim() ? img.caption : rep.defaultCaption,
+              isDuplicate: false,
+            };
+          }
+          return img;
+        })
+      );
+      refreshCatalogStatus();
+      return rep.url;
     } catch (err: any) {
       setErrorMsg(isAr ? 'تعذر جلب صورة بديلة فريدة حالياً: ' + err.message : 'Failed to fetch unique replacement: ' + err.message);
     }
     return null;
   };
 
-  // 1-Click Replace All Duplicates
-  const handleReplaceAllDuplicates = async () => {
+  // 1-Click Replace All Duplicates — returns updated list directly to avoid stale state closures
+  const handleReplaceAllDuplicates = async (): Promise<UploadedImageItem[]> => {
     const duplicates = images.filter((img) => duplicateStatusMap[img.url]?.isDuplicate);
-    if (duplicates.length === 0) return;
+    if (duplicates.length === 0) return images;
 
     setIsAutoReplacingAll(true);
+    let workingImages = [...images];
     try {
-      const newlyAssigned: string[] = [];
+      const excludeList: string[] = workingImages.map((i) => i.url);
       for (const dup of duplicates) {
-        const repUrl = await handleAutoReplaceImage(dup.id, newlyAssigned);
-        if (repUrl) {
-          newlyAssigned.push(repUrl);
+        const rep = getUniqueClientDecorReplacement(excludeList, topic || focusKeyword);
+        if (rep?.url) {
+          excludeList.push(rep.url);
+          workingImages = workingImages.map((item) =>
+            item.id === dup.id
+              ? {
+                  ...item,
+                  url: rep.url,
+                  caption: item.caption?.trim() ? item.caption : (rep.defaultCaption || ''),
+                  isDuplicate: false,
+                }
+              : item
+          );
         }
       }
+      setImages(workingImages);
+      refreshCatalogStatus();
+      return workingImages;
     } finally {
       setIsAutoReplacingAll(false);
     }
   };
 
   React.useEffect(() => {
-    fetch('/api/ai/provider-status')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data) setProviderStatus(data);
-      })
-      .catch(() => {});
+    setProviderStatus(getClientGeminiStatus());
   }, []);
 
   // Handle local file upload with high-efficiency client-side compression (WebP / 1600px max)
@@ -467,28 +424,19 @@ export const SmartArticleCreator: React.FC<SmartArticleCreatorProps> = ({
   // Add a new blank image slot using a unique, unused catalog image
   const handleAddNewImageSlot = async () => {
     const currentUrls = images.map((i) => i.url);
-    try {
-      const res = await fetch('/api/images/get-unique-replacement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ excludeUrls: currentUrls }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.replacement) {
-          setImages((prev) => [
-            ...prev,
-            {
-              id: 'img-' + Date.now(),
-              url: data.replacement.url,
-              caption: data.replacement.defaultCaption || '',
-            },
-          ]);
-          refreshCatalogStatus();
-          return;
-        }
-      }
-    } catch {}
+    const rep = getUniqueClientDecorReplacement(currentUrls, topic || focusKeyword);
+    if (rep) {
+      setImages((prev) => [
+        ...prev,
+        {
+          id: 'img-' + Date.now(),
+          url: rep.url,
+          caption: rep.defaultCaption || '',
+        },
+      ]);
+      refreshCatalogStatus();
+      return;
+    }
 
     const sampleDecorUrls = [
       'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?auto=format&fit=crop&w=1000&q=80',
@@ -567,77 +515,69 @@ export const SmartArticleCreator: React.FC<SmartArticleCreatorProps> = ({
       return;
     }
 
-    // Zero-Duplicate Enforcement before generation
+    setErrorMsg('');
+    setGeneratedArticle(null);
+    setIpProtectionNotice(null);
+
+    // Zero-Duplicate Enforcement before generation (using returned fresh list, never stale closure)
+    let activeImages = [...images];
     if (strictZeroDuplicates) {
-      const dupCount = images.filter((img) => duplicateStatusMap[img.url]?.isDuplicate).length;
+      const dupCount = activeImages.filter((img) => duplicateStatusMap[img.url]?.isDuplicate).length;
       if (dupCount > 0) {
         setGenerationStep(isAr ? 'درع عدم تكرار الصور: استبدال تلقائي للصور المكررة بصور معمارية فريدة...' : 'Zero-Duplicate Shield: Auto-replacing duplicate images...');
-        await handleReplaceAllDuplicates();
+        activeImages = await handleReplaceAllDuplicates();
       }
     }
 
-    setErrorMsg('');
     setIsGenerating(true);
     setGenerationStep(isAr ? '1/4 تحليل الصور والشروحات وفحص معايير Google AdSense ومكافحة المحتوى النحيف...' : 'Analyzing images, captions & checking AdSense standards...');
 
+    const stepTimers: ReturnType<typeof setTimeout>[] = [];
     try {
-      // Step feedback animation
-      setTimeout(() => {
-        setGenerationStep(isAr ? '2/4 صياغة المقال بأسلوب بشري جذاب، وتوليد العنوان والكلمات المفتاحية إن نسيتها...' : 'Crafting human tone, generating missing keywords & AdSense title...');
-      }, 1400);
+      // Step feedback animation (tracked so they are always cleared when finished)
+      stepTimers.push(
+        setTimeout(() => {
+          setGenerationStep(isAr ? '2/4 صياغة المقال بأسلوب بشري جذاب، وتوليد العنوان والكلمات المفتاحية إن نسيتها...' : 'Crafting human tone, generating missing keywords & AdSense title...');
+        }, 1400)
+      );
+      stepTimers.push(
+        setTimeout(() => {
+          setGenerationStep(isAr ? '3/4 تطبيق معايير السيو (SEO H2/H3)، قسم النصائح الهندسية، والأسئلة الشائعة (FAQ)...' : 'Structuring H2/H3 headings, engineer insights & FAQs...');
+        }, 3000)
+      );
+      stepTimers.push(
+        setTimeout(() => {
+          setGenerationStep(isAr ? '4/4 دمج الصور وشروحاتها وتهيئة مواضع الإعلانات ونشر المقال فوراً في المدونة...' : 'Weaving images, optimizing ad slots & publishing to live blog...');
+        }, 4800)
+      );
 
-      setTimeout(() => {
-        setGenerationStep(isAr ? '3/4 تطبيق معايير السيو (SEO H2/H3)، قسم النصائح الهندسية، والأسئلة الشائعة (FAQ)...' : 'Structuring H2/H3 headings, engineer insights & FAQs...');
-      }, 3000);
-
-      setTimeout(() => {
-        setGenerationStep(isAr ? '4/4 دمج الصور وشروحاتها وتهيئة مواضع الإعلانات ونشر المقال فوراً في المدونة...' : 'Weaving images, optimizing ad slots & publishing to live blog...');
-      }, 4800);
-
-      const response = await fetchWithAuth('/api/ai/generate-smart-article', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          images: images.map((img) => ({
-            url: img.url,
-            caption: img.caption ? img.caption.trim() : '',
-          })),
-          topic: topic.trim(),
-          draftTitle: topic.trim(),
-          draftContent: draftContent.trim(),
-          focusKeyword: focusKeyword.trim(),
-          tone,
-          targetWordCount,
-          language,
-          locationPreference: locationAddress ? `${locationAddress} ${locationMapUrl}`.trim() : undefined,
-          provider: selectedProvider !== 'auto' ? selectedProvider : undefined,
-        }),
+      const data = await generateSmartArticleWithGeminiClient({
+        images: activeImages.map((img) => ({
+          url: img.url,
+          caption: img.caption ? img.caption.trim() : '',
+        })),
+        topic: topic.trim(),
+        draftTitle: topic.trim(),
+        draftContent: draftContent.trim(),
+        focusKeyword: focusKeyword.trim(),
+        tone,
+        creativeStyle: selectedCreativeStyle,
+        targetWordCount,
+        language,
+        locationPreference: locationAddress ? `${locationAddress} ${locationMapUrl}`.trim() : undefined,
+        businessLocation: (settings as any)?.businessLocation || null,
+        authorName: settings?.authorName || 'الحضرى محمود',
       });
-
-      if (!response.ok) {
-        let failureText = `HTTP ${response.status}`;
-        try {
-          const errData = await response.json();
-          failureText = errData.error || errData.message || failureText;
-        } catch {
-          try {
-            failureText = await response.text();
-          } catch {}
-        }
-        setErrorMsg(isAr ? `فشل توليد المقال: ${failureText}` : `Generation failed: ${failureText}`);
-        setIsGenerating(false);
-        return;
-      }
-
-      const data = await response.json();
+      const articleTitle =
+        data.title || (isAr ? 'أحدث أسرار تشطيبات الديكور ودهانات الحوائط العصرية لعام 2026' : 'Decor & Wall Paints Guide 2026');
 
       const newArticle: Article = {
         id: 'smart-post-' + Date.now(),
-        title: data.title || (isAr ? 'أحدث أسرار تشطيبات الديكور ودهانات الحوائط العصرية لعام 2026' : 'Decor & Wall Paints Guide 2026'),
-        slug: (data.title || 'decor-article').toLowerCase().replace(/[\s/\\?#%]+/g, '-').replace(/-+/g, '-').slice(0, 60),
+        title: articleTitle,
+        slug: sanitizeArticleSlug(data.slug || articleTitle),
         excerpt: data.excerpt || (isAr ? 'مقال مصور متخصص في عالم الديكور والدهانات صاغه الذكاء الاصطناعي وفق أعلى معايير AdSense والسيو بأسلوب بشري راقٍ.' : 'A decor post synthesized with AdSense standards.'),
         content: data.content || '',
-        featuredImage: data.featuredImage || images[0]?.url || 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80',
+        featuredImage: data.featuredImage || activeImages[0]?.url || 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80',
         author: {
           name: settings?.authorName || 'الحضرى محمود',
           avatar: settings?.authorAvatar || '',
@@ -677,7 +617,7 @@ export const SmartArticleCreator: React.FC<SmartArticleCreatorProps> = ({
           },
         };
         setGeneratedArticle(normalized);
-        setErrorMsg(''); // Clear any previous errors on successful publication
+        setErrorMsg('');
 
         // Update image slots with protected URLs and duplicate status
         if (Array.isArray(data.protectedImages) && data.protectedImages.length > 0) {
@@ -709,23 +649,23 @@ export const SmartArticleCreator: React.FC<SmartArticleCreatorProps> = ({
           setCreativeAngleName(data.creativeAngle);
         }
       } catch (pubErr: any) {
-        console.warn('Publication to DB warning:', pubErr);
+        console.warn('Publication to DB failed:', pubErr);
         setErrorMsg(
           isAr
-            ? `تم توليد المقال بالذكاء الاصطناعي بنجاح، لكن تعذر حفظه في قاعدة البيانات: ${pubErr.message}`
-            : `Article generated, but failed to save to database: ${pubErr.message}`
+            ? `تعذر حفظ ونشر المقال في قاعدة البيانات: ${pubErr.message}`
+            : `Failed to save article to database: ${pubErr.message}`
         );
       }
-      setIsGenerating(false);
     } catch (err: unknown) {
       console.warn('Smart article generation warning:', err);
-      setIsGenerating(false);
-      const detail = err instanceof Error ? err.message : String(err);
-      setErrorMsg(
-        isAr
-          ? `تعذر استكمال العملية: ${detail}. يرجى المحاولة مرة أخرى.`
-          : `Failed to complete article generation: ${detail}. Please try again.`
+      const arabicMessage = formatGeminiArabicError(
+        err,
+        isAr ? 'تعذر توليد المقال بالذكاء الاصطناعي' : 'Failed to generate article with Gemini'
       );
+      setErrorMsg(arabicMessage);
+    } finally {
+      stepTimers.forEach((t) => clearTimeout(t));
+      setIsGenerating(false);
     }
   };
 
@@ -1422,6 +1362,13 @@ export const SmartArticleCreator: React.FC<SmartArticleCreatorProps> = ({
             <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
               {ipProtectionNotice}
             </p>
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="p-4 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 text-xs sm:text-sm flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
+            <span>{errorMsg}</span>
           </div>
         )}
 

@@ -11,7 +11,12 @@ import {
 } from '../db/repo.ts';
 import { requireAdminAuth } from './authRoutes.ts';
 import { EXPANDED_DECOR_CATALOG, CuratedDecorImage } from '../data/curatedImagesCatalog.ts';
-import { validateArticlePayload, countActualWords } from '../utils/articleValidator.ts';
+import {
+  validateArticlePayload,
+  countActualWords,
+  sanitizeArticleSlug,
+  assessArticleCreativity,
+} from '../utils/articleValidator.ts';
 import { inspectAndHashImageUrl } from '../utils/imageHasher.ts';
 import {
   generateWithAi,
@@ -20,7 +25,10 @@ import {
   AiProvider,
 } from './aiProvider.ts';
 import { batchAnalyzeAndProtectImages } from '../utils/imageProtection.ts';
-import { selectHumanFallbackArticle } from './fallbackArticleTemplates.ts';
+import {
+  selectHumanFallbackArticle,
+  buildCreativeHumanEnrichment,
+} from './fallbackArticleTemplates.ts';
 
 export const articleAiRouter = Router();
 
@@ -164,7 +172,7 @@ articleAiRouter.post('/api/images/check-duplicates', async (req: Request, res: R
       seenInBatch.add(rawUrl);
 
       // 2. Check site-wide duplicate (already in another article)
-      const dupCheck = await checkImageDuplicateInDb(rawUrl, currentArticleId);
+      const dupCheck = await checkImageDuplicateInDb(rawUrl, undefined, currentArticleId);
       if (dupCheck.isDuplicate) {
         hasDuplicates = true;
         const replacement = findReplacement();
@@ -249,6 +257,7 @@ articleAiRouter.post('/api/ai/generate-smart-article', async (req: Request, res:
       draftContent,
       focusKeyword,
       tone = 'إبداعي واحترافي بأسلوب بشري دافئ',
+      creativeStyle,
       language = 'ar',
       targetWordCount = 1200,
       locationPreference,
@@ -318,7 +327,10 @@ articleAiRouter.post('/api/ai/generate-smart-article', async (req: Request, res:
       },
     ];
 
-    const pickedAngle = creativeAngles[Math.floor(Math.random() * creativeAngles.length)];
+    const requestedAngle = creativeStyle
+      ? creativeAngles.find((a) => a.id === String(creativeStyle).trim())
+      : undefined;
+    const pickedAngle = requestedAngle || creativeAngles[Math.floor(Math.random() * creativeAngles.length)];
 
     const systemInstruction = `أنت كاتب مقالات إبداعي وخبير ديكور وتشطيبات بشري حقيقي لمدونة «ألفا للديكور والدهانات» (Alpha Decor & Paints) بإشراف صاحب الموقع وخبير التشطيبات «الحضرى محمود».
 
@@ -405,9 +417,10 @@ ${imageDescriptionsText}
     let fallbackTriggered = false;
     let fallbackReason: string | undefined = undefined;
 
-    const requestedProvider = req.body.provider === 'groq' || req.body.provider === 'gemini'
-      ? (req.body.provider as AiProvider)
-      : undefined;
+    const requestedProvider =
+      req.body.provider === 'groq' || req.body.provider === 'gemini' || req.body.provider === 'grok'
+        ? (req.body.provider as AiProvider)
+        : undefined;
 
     try {
       const aiResult = await generateWithAi({
@@ -416,7 +429,7 @@ ${imageDescriptionsText}
         responseJson: true,
         temperature: 0.7,
         provider: requestedProvider,
-        timeoutMs: 18000,
+        timeoutMs: 45000,
         images: aiImageParts.length > 0 ? aiImageParts.slice(0, 5) : undefined,
       });
 
@@ -435,9 +448,12 @@ ${imageDescriptionsText}
       const fallbackResult = selectHumanFallbackArticle({
         topic,
         draftTitle,
+        draftContent,
         focusKeyword,
         imagesCount: effectiveImages.length,
+        imageCaptions: effectiveImages.map((img: any) => (img?.caption ? String(img.caption).trim() : '')),
         userAngleId: pickedAngle.id,
+        targetWordCount: clampedWords,
       });
 
       parsedData = {
@@ -469,7 +485,7 @@ ${imageDescriptionsText}
       }));
     }
 
-    let finalContent = parsedData.content || '';
+    let finalContent: string = String(parsedData.content || '');
     const seenImageUrlsInArticle = new Set<string>();
     const embeddedImages: { url: string; caption: string }[] = [];
 
@@ -498,7 +514,16 @@ ${imageDescriptionsText}
       if (finalContent.includes(placeholder)) {
         finalContent = finalContent.split(placeholder).join(imgMarkdown);
       } else {
-        finalContent += imgMarkdown;
+        // Place extra images naturally after an H2 heading rather than stacking them at the bottom
+        const h2Matches: RegExpMatchArray[] = Array.from(finalContent.matchAll(/^##\s+.+$/gm));
+        const targetHeading = h2Matches[Math.min(idx, Math.max(0, h2Matches.length - 1))];
+        if (targetHeading && typeof targetHeading.index === 'number') {
+          const insertPos = targetHeading.index + targetHeading[0].length;
+          finalContent =
+            finalContent.slice(0, insertPos) + imgMarkdown + finalContent.slice(insertPos);
+        } else {
+          finalContent += imgMarkdown;
+        }
       }
     }
 
@@ -530,28 +555,24 @@ ${imageDescriptionsText}
       parsedData.googleMapsLocation = null;
     }
 
-    // Auto-enrichment safety guarantee: ensure full article reaches 1,050+ words for AdSense compliance
+    // Auto-enrichment safety guarantee: ensure full article reaches 1,050+ words without duplicate sections
     let actualWordCount = countActualWords(finalContent);
-    if (actualWordCount < 1050) {
-      const enrichmentSections = [
-        `\n\n## بروتوكول تأسيس الحوائط المعتمد لدى «ألفا للديكور والدهانات» لعام 2026\nيؤكد المهندس الاستشاري الحضرى محمود على أن جودة الدهان النهائي تتوقف بنسبة 90% على دقة التأسيس الأولي للمحارة والجبس بورد. إليك الخطوات الهندسية الصارمة الواجب اتباعها قبل تطبيق أي طبقة طلاء:\n1. **كشط وتنظيف السطح:** التخلص التام من الأتربة والزيوت وبقايا الجير القديم باستخدام حجر الجلخ وصنفرة خشنة لفتح المسامات الإسمنتية.\n2. **السيلر المائي البوليمري العازل:** دهان وجه مشبع لاختراق عمق المحارة وحبس الأملاح والرطوبة وضمان التصاق المعجون بقوة فائقة لسنوات طويلة.\n3. **سكاكين المعجون المتعامدة:** سحب ثلاث سكاكين معجون ناعم متقاطع (رأسياً ثم أفقياً ثم مائلاً) لردم أي انخفاضات مجهرية بالسطح وضمان نعومة فائقة.\n4. **الصنفرة بالكشاف الضوئي المائل 500 واط:** فحص استواء الجدار تحت ضوء مائل لكشف أي تموج وإزالته بصنفرة ناعمة رقم 320 قبل الدهان النهائي.`,
-
-        `\n\n## قواعد هارموني الألوان وتنسيق الإضاءة المعمارية 3000K\nإن اختيار الألوان ليس مسألة بصرية مجردة، بل هو علم سيكولوجي وهندسي متكامل:\n- **تدرجات الأوف وايت والجريج:** تمنح الغرفة رحابة فندقية وتسمح بتغيير ألوان الأثاث والستائر في المستقبل دون الحاجة لتغيير دهان الجدران.\n- **درجة حرارة الإضاءة:** ننصح دائماً باعتماد وحدات إضاءة دافئة بدرجة 3000 كلفن أو حيادية 4000 كلفن، وتجنب الإضاءة البيضاء الباردة 6500 كلفن التي تفسد دفء الدهان وتسبب إجهاداً عصبياً للعين.\n- **الجدار المميز (Accent Wall):** دمج دهان داكن نسبياً أو ورق حائط فاخر أو شرائح بديل الخشب مع شريط ليد بروفايل يمنح الصالة عمقاً ساحراً ونقطة جذب بصرية متوازنة.`,
-
-        `\n\n## دليل الصيانة والعناية طويلة الأمد بدهانات الحوائط\nللحفاظ على رونق وبهاء الدهانات الفاخرة لسنوات طويلة دون بهتان أو تلف:\n- تجنب فرك الحوائط بألياف سلكية أو منظفات كيميائية قاسية؛ يكفي استخدام إسفنجة قطنية ناعمة مبللة بالماء الفاتر ومحلول صابوني خفيف.\n- معالجة أي مصدر تسريب مياه أو نشع رطوبة فور ظهوره خلف الحوائط لمنع تفكك طبقات المعجون.\n- دهان وجه سيلر حماية شفاف خفيف في المطابخ والممرات المزدحمة لزيادة مقاومة الاحتكاك وسهولة الغسيل الدائم.`,
-
-        `\n\n## الأسئلة الشائعة حول دهانات وديكورات الحوائط (FAQ)\n**س: كيف أحافظ على ثبات درجات ألوان الدهانات المودرن لسنوات طويلة؟**\nج: يعتمد الثبات على جودة الأكريليك النقي في البوية، والتأسيس بسيلر أصلي مقاوم للأملاح، والابتعاد عن تعريض الجدران لأشعة الشمس المباشرة الحارقة دون ستائر واقية.\n\n**س: هل يفضل دمج بديل الرخام مع بديل الخشب في الصالات ومجالس المعيشة؟**\nج: نعم، هذا الدمج هو سر الفخامة الهادئة لعام 2026؛ فبريق الرخام يعكس الضوء بينما يضفي الخشب دفئاً حميمياً يكسر البرودة ويجعل المكان مريحاً للأعصاب.\n\n**س: ما الفرق بين دهان البلاستيك المطفي ونصف اللامع في الاستخدام العملي؟**\nج: الدهان المطفي يخفي عيوب استواء الجدار ولكنه أصعب في الغسيل، لذا يناسب الأسقف وغرف النوم الهادئة. بينما الدهان نصف اللامع مقاوم للبقع وقابل للغسيل المتكرر، مما يجعله الخيار الأمثل للصالات والممرات وغرف المعيشة.`
-      ];
-
-      for (const section of enrichmentSections) {
-        if (actualWordCount < 1050) {
-          finalContent += section;
-          actualWordCount = countActualWords(finalContent);
-        }
+    const enrichmentTarget = Math.max(1050, Math.min(clampedWords, 2000));
+    if (actualWordCount < enrichmentTarget) {
+      const extraBlock = buildCreativeHumanEnrichment({
+        topic: parsedData.title || topic || draftTitle,
+        existingContent: finalContent,
+        targetWordCount: enrichmentTarget,
+        language: isAr ? 'ar' : 'en',
+      });
+      if (extraBlock) {
+        finalContent += extraBlock;
+        actualWordCount = countActualWords(finalContent);
       }
     }
 
     parsedData.content = finalContent;
+    parsedData.slug = sanitizeArticleSlug(parsedData.slug || parsedData.title || topic || 'decor-post');
 
     if (!parsedData.featuredImage) {
       parsedData.featuredImage = embeddedImages[0]?.url || EXPANDED_DECOR_CATALOG[0].url;
@@ -592,12 +613,14 @@ ${imageDescriptionsText}
     if (h2Count >= 3) dynamicSeo += 5;
     parsedData.seoScore = validation.valid ? Math.min(99, dynamicSeo) : Math.min(65, dynamicSeo);
 
-    // Dynamic Human Tone scoring based on depth and natural writing
-    let dynamicHumanTone = 70;
-    if (actualWordCount >= 1000) dynamicHumanTone += 10;
-    if (cleanContent.includes('الحضرى محمود')) dynamicHumanTone += 10;
-    if (cleanContent.includes('نصيحة') || cleanContent.includes('تطبيق عملي')) dynamicHumanTone += 8;
-    parsedData.humanToneScore = validation.valid ? Math.min(98, dynamicHumanTone) : Math.min(65, dynamicHumanTone);
+    // Dynamic Human Tone scoring based on creativity assessment and genuine natural style
+    const creativityReport = assessArticleCreativity(finalContent);
+    let dynamicHumanTone = Math.min(82, creativityReport.humanScore - 18);
+    if (actualWordCount >= 1000) dynamicHumanTone += 8;
+    if (cleanContent.includes('الحضرى محمود')) dynamicHumanTone += 6;
+    if (cleanContent.includes('نصيحة') || cleanContent.includes('توصيات') || cleanContent.includes('تطبيق')) dynamicHumanTone += 4;
+    parsedData.humanToneScore = validation.valid ? Math.min(99, dynamicHumanTone) : Math.min(65, dynamicHumanTone);
+    parsedData.humanCreativity = creativityReport;
 
     if (!parsedData.focusKeyword) parsedData.focusKeyword = focusKeyword || topic || 'أحدث دهانات الحوائط والديكور الحديث';
     if (!parsedData.category) parsedData.category = 'دهانات وديكورات داخلية';

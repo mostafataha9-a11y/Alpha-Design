@@ -11,6 +11,10 @@ import {
 import { AdminUser, SiteSettings } from '../types/blog';
 import { fetchWithAuth } from '../utils/apiAuth';
 import {
+  auditContractorAccountsWithGeminiClient,
+  formatGeminiArabicError,
+} from '../services/geminiClient';
+import {
   ProjectAccount,
   INITIAL_SAMPLE_PROJECTS,
   STORAGE_KEY,
@@ -336,19 +340,13 @@ export const ContractorNotebook: React.FC<ContractorNotebookProps> = ({
         return;
       }
 
-      const res = await fetch('/api/ai/audit-contractor-accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projects }),
-      });
-
-      if (!res.ok) throw new Error('Audit request failed');
-
-      const data = await res.json();
+      const data = await auditContractorAccountsWithGeminiClient(projects);
       setAuditResult(data);
     } catch (err) {
       console.error('AI audit error:', err);
-      setAuditError('تعذر الاتصال بخدمة التدقيق بالذكاء الاصطناعي، يرجى المحاولة لاحقاً.');
+      setAuditError(
+        formatGeminiArabicError(err, 'تعذر إتمام التدقيق بالذكاء الاصطناعي')
+      );
     } finally {
       setIsAuditing(false);
     }

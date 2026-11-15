@@ -19,6 +19,10 @@ import {
   Zap
 } from 'lucide-react';
 import { Article, SiteSettings, BroadcastHistoryItem } from '../types/blog';
+import {
+  generateSocialBroadcastWithGeminiClient,
+  formatGeminiArabicError,
+} from '../services/geminiClient';
 
 interface SocialBroadcastModalProps {
   isOpen: boolean;
@@ -40,6 +44,7 @@ export const SocialBroadcastModal: React.FC<SocialBroadcastModalProps> = ({
   const authorName = settings.authorName || 'الحضرى محمود';
 
   const [isLoadingCopy, setIsLoadingCopy] = useState(false);
+  const [aiError, setAiError] = useState('');
   const [copiedNetwork, setCopiedNetwork] = useState<string | null>(null);
   const [isBroadcastingAll, setIsBroadcastingAll] = useState(false);
   const [broadcastDone, setBroadcastDone] = useState(false);
@@ -53,31 +58,30 @@ export const SocialBroadcastModal: React.FC<SocialBroadcastModalProps> = ({
     whatsapp: `مرحباً، أشاركك هذا المقال القيم من مدونة ألفا ديزاين: "${article.title}". يمكنك قراءته من هنا:\n${window.location.origin}/#${article.slug}`,
   });
 
-  // Generate smart AI copy via Gemini
+  // Generate smart AI copy via direct Client-side Gemini SDK
   const handleGenerateSmartCopy = async () => {
     setIsLoadingCopy(true);
+    setAiError('');
     try {
-      const response = await fetch('/api/ai/social-broadcast', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          articleTitle: article.title,
-          articleExcerpt: article.excerpt,
-          articleUrl: `${window.location.origin}/#${article.slug}`,
-          tags: article.tags,
-          authorName,
-          networks: broadcastConfig.activeNetworks,
-        }),
+      const broadcasts = await generateSocialBroadcastWithGeminiClient({
+        articleTitle: article.title,
+        articleExcerpt: article.excerpt,
+        articleUrl: `${window.location.origin}/#${article.slug}`,
+        tags: article.tags,
+        authorName,
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.broadcasts) {
-          setSocialTexts(data.broadcasts);
-        }
+      if (broadcasts && typeof broadcasts === 'object') {
+        setSocialTexts((prev) => ({ ...prev, ...broadcasts }));
       }
     } catch (err) {
       console.warn('Could not generate smart copy:', err);
+      setAiError(
+        formatGeminiArabicError(
+          err,
+          isAr ? 'تعذر توليد نصوص السوشيال ميديا بالذكاء الاصطناعي' : 'Failed to generate AI copy'
+        )
+      );
     } finally {
       setIsLoadingCopy(false);
     }
@@ -217,6 +221,12 @@ export const SocialBroadcastModal: React.FC<SocialBroadcastModalProps> = ({
               )}
             </button>
           </div>
+
+          {aiError && (
+            <div className="p-3.5 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs font-medium">
+              ⚠️ {aiError}
+            </div>
+          )}
 
           {/* Platform Specific Previews */}
           <div className="space-y-4">
