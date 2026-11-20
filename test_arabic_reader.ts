@@ -143,6 +143,12 @@ async function runChatbotChecks() {
   const appSrc = fs.readFileSync('src/App.tsx', 'utf8');
   assert.ok(appSrc.includes('initialMode={chatBotMode}'), 'App must pass chatBotMode to ChatBot');
 
+  const geminiClientSrc = fs.readFileSync('src/services/geminiClient.ts', 'utf8');
+  assert.ok(
+    !geminiClientSrc.includes('اقرأ النص العربي التالي'),
+    'TTS contents must not include spoken Arabic instruction preamble'
+  );
+
   console.log('✅ Verified Chatbot & Reader Anti-Hang Safeguards (all checks passed).');
 }
 

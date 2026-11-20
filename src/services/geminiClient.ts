@@ -1028,10 +1028,27 @@ export async function synthesizeArabicSpeechWithGeminiClient(input: {
   for (let i = 0; i < CLIENT_TTS_MODELS.length; i++) {
     const model = CLIENT_TTS_MODELS[i];
     try {
+      const contents =
+        model === 'gemini-3.8-flash-lite-tts'
+          ? [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: cleanText,
+                    speechMetadata: {
+                      style: 'Clear, natural Arabic narrator',
+                    },
+                  },
+                ],
+              },
+            ]
+          : cleanText;
+
       const response = await withTimeout(
         ai.models.generateContent({
           model,
-          contents: `اقرأ النص العربي التالي باللغة العربية الفصحى بنبرة دافئة وواضحة وبإلقاء إذاعي متزن دون إضافة أي تعليق أو مقدمات من عندك:\n\n${cleanText}`,
+          contents,
           config: {
             responseModalities: ['AUDIO'],
             speechConfig: {
