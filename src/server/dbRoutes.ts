@@ -404,12 +404,18 @@ dbRouter.post('/api/newsletter/subscribe', async (req: Request, res: Response) =
       });
     }
 
-    const { email } = req.body;
+    const { email } = req.body || {};
     if (!email || typeof email !== 'string') {
       return res.status(400).json({ error: 'يرجى إدخال عنوان بريد إلكتروني صحيح.' });
     }
 
-    const result = await addDbNewsletterSubscriber(email, ip);
+    const cleanEmail = email.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    if (!emailRegex.test(cleanEmail)) {
+      return res.status(400).json({ error: 'صيغة البريد الإلكتروني غير صالحة.' });
+    }
+
+    const result = await addDbNewsletterSubscriber(cleanEmail, ip);
 
     res.json({
       success: true,
@@ -421,6 +427,9 @@ dbRouter.post('/api/newsletter/subscribe', async (req: Request, res: Response) =
       note: 'تم تسجيل البريد في قاعدة البيانات الدائمة بنجاح. خدمة إرسال النشرات الخارجية غير مفعلة حالياً.',
     });
   } catch (err: any) {
+    if (err?.message === 'صيغة البريد الإلكتروني غير صالحة.') {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('API POST /api/newsletter/subscribe error:', err);
     res.status(400).json({ error: err.message || 'فشل تسجيل الاشتراك.' });
   }

@@ -24,6 +24,8 @@ interface ArticlesViewProps {
   articles: Article[];
   settings: SiteSettings;
   categories: string[];
+  selectedCategory?: string;
+  onSelectCategory?: (cat: string) => void;
   onSelectArticle: (article: Article) => void;
   onOpenShareModal: (article: Article) => void;
   onNavigateHome?: () => void;
@@ -33,6 +35,8 @@ export const ArticlesView: React.FC<ArticlesViewProps> = ({
   articles,
   settings,
   categories,
+  selectedCategory: propSelectedCategory,
+  onSelectCategory: propOnSelectCategory,
   onSelectArticle,
   onOpenShareModal,
   onNavigateHome,
@@ -40,12 +44,22 @@ export const ArticlesView: React.FC<ArticlesViewProps> = ({
   const isAr = settings.language === 'ar';
   const authorName = settings.authorName || 'الحضرى محمود';
 
-
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('الكل');
+  const [localSelectedCategory, setLocalSelectedCategory] = useState('الكل');
+  const selectedCategory = propSelectedCategory ?? localSelectedCategory;
+  const setSelectedCategory = (cat: string) => {
+    setLocalSelectedCategory(cat);
+    if (propOnSelectCategory) {
+      propOnSelectCategory(cat);
+    }
+  };
   const [sortBy, setSortBy] = useState<'latest' | 'views' | 'likes'>('latest');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [currentPage, setCurrentPage] = useState(1);
+
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategory]);
 
   // Filter & Sort
   const filteredArticles = useMemo(() => {

@@ -1,0 +1,317 @@
+{
+  "entities": {
+    "Article": {
+      "title": "Article",
+      "description": "Published or draft blog article for Alpha Decor & Paints",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 300
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "excerpt": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 650000
+        },
+        "featuredImage": {
+          "type": "string",
+          "maxLength": 350000
+        },
+        "author": {
+          "type": "object",
+          "description": "Article author badge metadata (name, avatar, role)"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "tags": {
+          "type": "array",
+          "description": "Bounded array of article topic tags (max 20)"
+        },
+        "publishedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "readingTime": {
+          "type": "number"
+        },
+        "views": {
+          "type": "number"
+        },
+        "likes": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["published", "draft"]
+        },
+        "isAutoPublished": {
+          "type": "boolean"
+        },
+        "autoImagesCount": {
+          "type": "number"
+        },
+        "imageCaptions": {
+          "type": "array"
+        },
+        "seoScore": {
+          "type": "number"
+        },
+        "humanToneScore": {
+          "type": "number"
+        },
+        "focusKeyword": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "metaDescription": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "secondaryKeywords": {
+          "type": "array"
+        },
+        "rewrittenByAi": {
+          "type": "boolean"
+        },
+        "adSenseCompliant": {
+          "type": "boolean"
+        },
+        "googleMapsLocation": {
+          "type": "object"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "slug",
+        "excerpt",
+        "content",
+        "featuredImage",
+        "author",
+        "category",
+        "tags",
+        "publishedAt",
+        "readingTime",
+        "views",
+        "likes",
+        "status",
+        "updatedAt"
+      ]
+    },
+    "ArticleComment": {
+      "title": "ArticleComment",
+      "description": "Public reader comment stored in the comments subcollection of a published article",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "articleId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "avatar": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "createdAtDisplay": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "likes": {
+          "type": "number"
+        },
+        "isPublic": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "articleId",
+        "author",
+        "avatar",
+        "content",
+        "createdAtDisplay",
+        "createdAt",
+        "likes",
+        "isPublic"
+      ]
+    },
+    "SitePublicSettings": {
+      "title": "SitePublicSettings",
+      "description": "Public blog branding, social links, assistant config, and ad placements",
+      "type": "object",
+      "properties": {
+        "blogName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "blogNameEn": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "tagline": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "taglineEn": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "authorBio": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "authorAvatar": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "articlesPerPage": {
+          "type": "number"
+        },
+        "language": {
+          "type": "string",
+          "enum": ["ar", "en"]
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["rtl", "ltr"]
+        },
+        "socialLinks": {
+          "type": "object"
+        },
+        "assistantNegotiation": {
+          "type": "object"
+        },
+        "ads": {
+          "type": "object"
+        },
+        "themeColor": {
+          "type": "string",
+          "enum": ["blue", "emerald", "purple", "amber", "rose", "slate"]
+        },
+        "fontFamily": {
+          "type": "string",
+          "enum": ["cairo", "inter"]
+        },
+        "customEmbeddedCode": {
+          "type": "object"
+        },
+        "developerCredit": {
+          "type": "object"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "blogName",
+        "authorName",
+        "articlesPerPage",
+        "language",
+        "direction",
+        "updatedAt"
+      ]
+    },
+    "OwnerSessionGate": {
+      "title": "OwnerSessionGate",
+      "description": "Write-only atomic SHA-256 owner verification gate for batched Firestore mutations",
+      "type": "object",
+      "properties": {
+        "proof": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["proof", "ts"]
+    },
+    "ConnectionProbe": {
+      "title": "ConnectionProbe",
+      "description": "Read-only connection verification document",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/articles/{articleId}": {
+      "schema": { "$ref": "#/entities/Article" },
+      "description": "Stores published blog articles for cross-visitor shared visibility on static and server hosts."
+    },
+    "/articles/{articleId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/ArticleComment" },
+      "description": "Subcollection storing reader comments for each published article."
+    },
+    "/siteSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/SitePublicSettings" },
+      "description": "Stores public blog settings under document ID 'public'."
+    },
+    "/adminSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/OwnerSessionGate" },
+      "description": "Write-only SHA-256 atomic gate checked via getAfter() for owner writes."
+    },
+    "/test/{docId}": {
+      "schema": { "$ref": "#/entities/ConnectionProbe" },
+      "description": "Read-only probe document 'connection' for Firestore connectivity check."
+    }
+  }
+}

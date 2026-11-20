@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Database, Download, Upload, RotateCcw } from 'lucide-react';
 import { SiteSettings, Article } from '../../types/blog';
 import { INITIAL_SETTINGS } from '../../data/initialData';
@@ -24,6 +24,8 @@ export const DataBackupSettingsTab: React.FC<DataBackupSettingsTabProps> = ({
   setImportNotification,
   isAr,
 }) => {
+  const [confirmResetPending, setConfirmResetPending] = useState(false);
+
   const handleExportData = () => {
     const dataToExport = {
       settings: formData,
@@ -104,16 +106,7 @@ export const DataBackupSettingsTab: React.FC<DataBackupSettingsTabProps> = ({
           <input type="file" accept=".json" onChange={handleImportData} className="hidden" />
         </label>
 
-        <button
-          type="button"
-          onClick={() => {
-            if (confirm(isAr ? 'هل أنت متأكد من إعادة ضبط البيانات إلى النماذج الافتراضية؟' : 'Reset all data to defaults?')) {
-              onResetData();
-              setFormData(INITIAL_SETTINGS);
-            }
-          }}
-          className="p-5 rounded-2xl bg-red-50/50 dark:bg-red-950/20 hover:bg-red-50 border border-red-200 dark:border-red-900/50 text-start space-y-2 transition-colors cursor-pointer"
-        >
+        <div className="p-5 rounded-2xl bg-red-50/50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 text-start space-y-2">
           <RotateCcw className="w-6 h-6 text-red-600" />
           <h4 className="font-bold text-sm text-red-900 dark:text-red-200">
             {isAr ? 'إعادة التعيين الافتراضي' : 'Reset to Defaults'}
@@ -121,7 +114,37 @@ export const DataBackupSettingsTab: React.FC<DataBackupSettingsTabProps> = ({
           <p className="text-xs text-red-600/80">
             {isAr ? 'استعادة المقالات النموذجية الأصلية لألفا ديزاين.' : 'Restore seed sample articles.'}
           </p>
-        </button>
+          {!confirmResetPending ? (
+            <button
+              type="button"
+              onClick={() => setConfirmResetPending(true)}
+              className="mt-2 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-colors cursor-pointer"
+            >
+              {isAr ? 'إعادة ضبط البيانات' : 'Reset Data'}
+            </button>
+          ) : (
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onResetData();
+                  setFormData(INITIAL_SETTINGS);
+                  setConfirmResetPending(false);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-red-700 hover:bg-red-600 text-white text-xs font-bold transition-colors cursor-pointer"
+              >
+                {isAr ? 'تأكيد إعادة الضبط' : 'Confirm Reset'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmResetPending(false)}
+                className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold transition-colors cursor-pointer"
+              >
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

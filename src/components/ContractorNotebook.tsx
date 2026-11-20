@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Calculator,
   Lock,
@@ -9,7 +9,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { AdminUser, SiteSettings } from '../types/blog';
-import { fetchWithAuth } from '../utils/apiAuth';
+import { fetchWithAuth, isJsonResponse } from '../utils/apiAuth';
 import {
   auditContractorAccountsWithGeminiClient,
   formatGeminiArabicError,
@@ -72,10 +72,50 @@ export const ContractorNotebook: React.FC<ContractorNotebookProps> = ({
   const [auditResult, setAuditResult] = useState<any>(null);
   const [auditError, setAuditError] = useState('');
 
+  const syncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const persistProjectToServer = (project: ProjectAccount) => {
+    const calc = calculateProject(project);
+    fetchWithAuth('/api/db/contractor-projects', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: project.id,
+        name: project.name,
+        client: project.client,
+        address: project.address,
+        agreedPrice: Number(project.agreed) || 0,
+        totalPaid: calc.totalPaid,
+        items: {
+          payments: project.payments || [],
+          labor: project.labor || [],
+          daily: project.daily || [],
+          expenses: project.expenses || [],
+          notes: project.notes || '',
+        },
+      }),
+    }).catch((err) => console.warn('Failed to sync contractor project to Cloud SQL:', err));
+  };
+
+  const scheduleProjectSync = (project: ProjectAccount) => {
+    if (syncTimersRef.current[project.id]) {
+      clearTimeout(syncTimersRef.current[project.id]);
+    }
+    syncTimersRef.current[project.id] = setTimeout(() => {
+      delete syncTimersRef.current[project.id];
+      persistProjectToServer(project);
+    }, 600);
+  };
+
+  useEffect(() => {
+    return () => {
+      Object.values(syncTimersRef.current).forEach((t) => clearTimeout(t));
+    };
+  }, []);
+
   // Fetch projects from Cloud SQL on mount
   useEffect(() => {
     fetchWithAuth('/api/db/contractor-projects')
-      .then((res) => res.json())
+      .then((res) => (res.ok && isJsonResponse(res) ? res.json() : null))
       .then((dbData) => {
         if (Array.isArray(dbData) && dbData.length > 0) {
           const mapped: ProjectAccount[] = dbData.map((d: any) => ({
@@ -98,7 +138,7 @@ export const ContractorNotebook: React.FC<ContractorNotebookProps> = ({
       .catch((err) => console.warn('Could not load projects from Cloud SQL:', err));
   }, []);
 
-  // Save to localStorage & Cloud SQL whenever projects change
+  // Save to localStorage whenever projects change
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
@@ -216,19 +256,18 @@ export const ContractorNotebook: React.FC<ContractorNotebookProps> = ({
     setProjects((prev) =>
       prev.map((p) => {
         if (p.id !== projectId) return p;
+        let nextProject = p;
         if (table === 'payments') {
-          return { ...p, payments: [...(p.payments || []), { id: newId, date: today, desc: '', amount: '', method: 'نقدي' }] };
+          nextProject = { ...p, payments: [...(p.payments || []), { id: newId, date: today, desc: '', amount: '', method: 'نقدي' }] };
+        } else if (table === 'labor') {
+          nextProject = { ...p, labor: [...(p.labor || []), { id: newId, date: today, name: '', work: '', amount: '' }] };
+        } else if (table === 'daily') {
+          nextProject = { ...p, daily: [...(p.daily || []), { id: newId, date: today, desc: '', amount: '' }] };
+        } else if (table === 'expenses') {
+          nextProject = { ...p, expenses: [...(p.expenses || []), { id: newId, date: today, desc: '', amount: '' }] };
         }
-        if (table === 'labor') {
-          return { ...p, labor: [...(p.labor || []), { id: newId, date: today, name: '', work: '', amount: '' }] };
-        }
-        if (table === 'daily') {
-          return { ...p, daily: [...(p.daily || []), { id: newId, date: today, desc: '', amount: '' }] };
-        }
-        if (table === 'expenses') {
-          return { ...p, expenses: [...(p.expenses || []), { id: newId, date: today, desc: '', amount: '' }] };
-        }
-        return p;
+        scheduleProjectSync(nextProject);
+        return nextProject;
       })
     );
   };
@@ -252,7 +291,9 @@ export const ContractorNotebook: React.FC<ContractorNotebookProps> = ({
           }
           return { ...r, [field]: val };
         });
-        return { ...p, [table]: updated };
+        const nextProject = { ...p, [table]: updated };
+        scheduleProjectSync(nextProject);
+        return nextProject;
       })
     );
   };
@@ -261,10 +302,12 @@ export const ContractorNotebook: React.FC<ContractorNotebookProps> = ({
     setProjects((prev) =>
       prev.map((p) => {
         if (p.id !== projectId) return p;
-        return {
+        const nextProject = {
           ...p,
           [table]: (p[table] as any[]).filter((r) => r.id !== rowId),
         };
+        scheduleProjectSync(nextProject);
+        return nextProject;
       })
     );
     showToast('🗑️ تم حذف الصف', 'success');
@@ -289,6 +332,7 @@ export const ContractorNotebook: React.FC<ContractorNotebookProps> = ({
     const updated = [...projects];
     updated.splice(idx + 1, 0, cloned);
     setProjects(updated);
+    persistProjectToServer(cloned);
     showToast('📋 تم تكرار صفحة العملية بنفس الحسابات بنجاح!', 'success');
   };
 
@@ -300,11 +344,15 @@ export const ContractorNotebook: React.FC<ContractorNotebookProps> = ({
     setProjects((prev) =>
       prev.map((p) => {
         if (p.id !== projectId) return p;
+        let nextProject: ProjectAccount;
         if (field === 'agreed') {
           const num = val === '' ? '' : Math.max(0, parseFloat(val) || 0);
-          return { ...p, agreed: num };
+          nextProject = { ...p, agreed: num };
+        } else {
+          nextProject = { ...p, [field]: val };
         }
-        return { ...p, [field]: val };
+        scheduleProjectSync(nextProject);
+        return nextProject;
       })
     );
   };
@@ -355,6 +403,9 @@ export const ContractorNotebook: React.FC<ContractorNotebookProps> = ({
   const handleApplyAiCorrections = () => {
     if (!auditResult?.auditedProjects) return;
     setProjects(auditResult.auditedProjects);
+    (auditResult.auditedProjects as ProjectAccount[]).forEach((proj) => {
+      persistProjectToServer(proj);
+    });
     setShowAuditModal(false);
     showToast('✅ تم اعتماد وتطبيق الحسابات المصححة بالذكاء الاصطناعي بنجاح!', 'success');
   };

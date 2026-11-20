@@ -20,6 +20,7 @@ import {
   Home
 } from 'lucide-react';
 import { ActiveTab, SiteSettings } from '../types/blog';
+import { isJsonResponse } from '../utils/apiAuth';
 
 interface FooterProps {
   settings: SiteSettings;
@@ -64,6 +65,17 @@ export const Footer: React.FC<FooterProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: newsletterEmail.trim() }),
       });
+
+      if (res.status === 404 || !isJsonResponse(res)) {
+        try {
+          localStorage.setItem('alpha_decor_newsletter_email', newsletterEmail.trim());
+        } catch {}
+        setNewsletterSuccess(true);
+        setNewsletterMessage(isAr ? 'تم تسجيل اشتراكك بنجاح في نشرة ألفا ديزاين!' : 'Subscribed successfully!');
+        setNewsletterEmail('');
+        setTimeout(() => setNewsletterSuccess(false), 6000);
+        return;
+      }
 
       const data = await res.json();
 

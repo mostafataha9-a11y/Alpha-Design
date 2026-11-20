@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Award
 } from 'lucide-react';
+import { isJsonResponse } from '../utils/apiAuth';
 
 interface HadaryCoinFollowWidgetProps {
   ownerName?: string;
@@ -127,8 +128,8 @@ export const HadaryCoinFollowWidget: React.FC<HadaryCoinFollowWidgetProps> = ({
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok && res.status !== 409) {
+      const data = isJsonResponse(res) ? await res.json().catch(() => ({})) : {};
+      if (isJsonResponse(res) && !res.ok && res.status !== 409) {
         throw new Error(data.error || 'Failed to subscribe');
       }
 

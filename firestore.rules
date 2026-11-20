@@ -1,0 +1,249 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything not explicitly matched
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------
+    // Global Hardened Helpers
+    // ---------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Write-only SHA-256 atomic gate checked synchronously inside the same writeBatch
+    // Avoids plaintext credentials in client/rules while supporting static SPA owner publishing.
+    function isExpectedGateHash(proof) {
+      return proof is string
+        && proof.size() == 64
+        && hashing.sha256(proof.toUtf8()).toHexString().lower() == 'fea14cc824cf63b2a204dfcaff674de6c8b7a4a16d74109aa3f4b9ca0b0097b1';
+    }
+
+    function hasValidOwnerGate() {
+      return getAfter(/databases/$(database)/documents/adminSessions/gate).data.ts == request.time
+        && isExpectedGateHash(getAfter(/databases/$(database)/documents/adminSessions/gate).data.proof);
+    }
+
+    function isValidAuthorMap(author) {
+      return author is map
+        && author.keys().hasAll(['name', 'avatar', 'role'])
+        && author.keys().hasOnly(['name', 'avatar', 'role'])
+        && author.name is string && author.name.size() >= 1 && author.name.size() <= 120
+        && author.avatar is string && author.avatar.size() <= 1000
+        && author.role is string && author.role.size() <= 120;
+    }
+
+    function isValidStringList(arr, maxLen, maxItemLen) {
+      return arr is list
+        && arr.size() <= maxLen
+        && (arr.size() == 0 || (arr[0] is string && arr[0].size() <= maxItemLen));
+    }
+
+    function isValidArticle(data) {
+      return data.keys().hasAll([
+          'id', 'title', 'slug', 'excerpt', 'content', 'featuredImage',
+          'author', 'category', 'tags', 'publishedAt', 'readingTime',
+          'views', 'likes', 'status', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'title', 'slug', 'excerpt', 'content', 'featuredImage',
+          'author', 'category', 'tags', 'publishedAt', 'readingTime',
+          'views', 'likes', 'status', 'isAutoPublished', 'autoImagesCount',
+          'imageCaptions', 'seoScore', 'humanToneScore', 'focusKeyword',
+          'metaDescription', 'secondaryKeywords', 'rewrittenByAi',
+          'adSenseCompliant', 'googleMapsLocation', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 300
+        && data.slug is string && data.slug.size() >= 1 && data.slug.size() <= 300
+        && data.excerpt is string && data.excerpt.size() <= 1000
+        && data.content is string && data.content.size() >= 1 && data.content.size() <= 650000
+        && data.featuredImage is string && data.featuredImage.size() <= 350000
+        && isValidAuthorMap(data.author)
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 120
+        && isValidStringList(data.tags, 20, 60)
+        && data.publishedAt is string && data.publishedAt.size() >= 1 && data.publishedAt.size() <= 64
+        && data.readingTime is number && data.readingTime >= 1 && data.readingTime <= 180
+        && data.views is number && data.views >= 0
+        && data.likes is number && data.likes >= 0
+        && (data.status == 'published' || data.status == 'draft')
+        && data.updatedAt == request.time
+        && (!('isAutoPublished' in data) || data.isAutoPublished is bool)
+        && (!('autoImagesCount' in data) || data.autoImagesCount is number)
+        && (!('imageCaptions' in data) || isValidStringList(data.imageCaptions, 20, 300))
+        && (!('seoScore' in data) || data.seoScore is number)
+        && (!('humanToneScore' in data) || data.humanToneScore is number)
+        && (!('focusKeyword' in data) || (data.focusKeyword is string && data.focusKeyword.size() <= 200))
+        && (!('metaDescription' in data) || (data.metaDescription is string && data.metaDescription.size() <= 500))
+        && (!('secondaryKeywords' in data) || isValidStringList(data.secondaryKeywords, 20, 100))
+        && (!('rewrittenByAi' in data) || data.rewrittenByAi is bool)
+        && (!('adSenseCompliant' in data) || data.adSenseCompliant is bool)
+        && (!('googleMapsLocation' in data) || data.googleMapsLocation is map);
+    }
+
+    function isValidComment(data, articleId) {
+      return data.keys().hasAll([
+          'id', 'articleId', 'author', 'avatar', 'content',
+          'createdAtDisplay', 'createdAt', 'likes', 'isPublic'
+        ])
+        && data.keys().hasOnly([
+          'id', 'articleId', 'author', 'avatar', 'content',
+          'createdAtDisplay', 'createdAt', 'likes', 'isPublic'
+        ])
+        && isValidId(data.id)
+        && data.articleId == articleId
+        && data.author is string && data.author.size() >= 1 && data.author.size() <= 120
+        && data.avatar is string && data.avatar.size() <= 500
+        && data.content is string && data.content.size() >= 1 && data.content.size() <= 4000
+        && data.createdAtDisplay is string && data.createdAtDisplay.size() <= 64
+        && data.createdAt == request.time
+        && data.likes is number && data.likes >= 0
+        && data.isPublic == true;
+    }
+
+    function isValidPublicSettings(data) {
+      return data.keys().hasAll([
+          'blogName', 'authorName', 'articlesPerPage', 'language', 'direction', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'blogName', 'blogNameEn', 'tagline', 'taglineEn', 'authorName',
+          'authorBio', 'authorAvatar', 'articlesPerPage', 'language', 'direction',
+          'socialLinks', 'assistantNegotiation', 'ads', 'themeColor', 'fontFamily',
+          'customEmbeddedCode', 'developerCredit', 'updatedAt'
+        ])
+        && data.blogName is string && data.blogName.size() >= 1 && data.blogName.size() <= 200
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 120
+        && data.articlesPerPage is number && data.articlesPerPage >= 3 && data.articlesPerPage <= 10
+        && (data.language == 'ar' || data.language == 'en')
+        && (data.direction == 'rtl' || data.direction == 'ltr')
+        && data.updatedAt == request.time
+        && (!('blogNameEn' in data) || (data.blogNameEn is string && data.blogNameEn.size() <= 200))
+        && (!('tagline' in data) || (data.tagline is string && data.tagline.size() <= 500))
+        && (!('taglineEn' in data) || (data.taglineEn is string && data.taglineEn.size() <= 500))
+        && (!('authorBio' in data) || (data.authorBio is string && data.authorBio.size() <= 1000))
+        && (!('authorAvatar' in data) || (data.authorAvatar is string && data.authorAvatar.size() <= 1000))
+        && (!('socialLinks' in data) || data.socialLinks is map)
+        && (!('assistantNegotiation' in data) || data.assistantNegotiation is map)
+        && (!('ads' in data) || data.ads is map)
+        && (!('themeColor' in data) || (data.themeColor is string && data.themeColor.size() <= 30))
+        && (!('fontFamily' in data) || (data.fontFamily is string && data.fontFamily.size() <= 30))
+        && (!('customEmbeddedCode' in data) || data.customEmbeddedCode is map)
+        && (!('developerCredit' in data) || data.developerCredit is map);
+    }
+
+    // ---------------------------------------------------------
+    // Collection Rules
+    // ---------------------------------------------------------
+
+    // Write-only owner proof gate
+    match /adminSessions/{sessionId} {
+      allow read, delete: if false;
+      allow create, update: if isValidId(sessionId)
+        && sessionId == 'gate'
+        && incoming().keys().hasAll(['proof', 'ts'])
+        && incoming().keys().hasOnly(['proof', 'ts'])
+        && incoming().ts == request.time
+        && isExpectedGateHash(incoming().proof);
+    }
+
+    // Connection probe document
+    match /test/{docId} {
+      allow get: if isValidId(docId) && docId == 'connection';
+      allow list, write: if false;
+    }
+
+    // Public blog articles & reader comments subcollection
+    match /articles/{articleId} {
+      allow get: if isValidId(articleId) && existing().status == 'published';
+      allow list: if resource.data.status == 'published';
+
+      allow create: if isValidId(articleId)
+        && isValidArticle(incoming())
+        && incoming().id == articleId
+        && hasValidOwnerGate();
+
+      allow update: if isValidId(articleId)
+        && isValidArticle(incoming())
+        && incoming().id == existing().id
+        && (
+          (hasValidOwnerGate() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'slug', 'excerpt', 'content', 'featuredImage', 'author', 'category',
+            'tags', 'publishedAt', 'readingTime', 'views', 'likes', 'status',
+            'isAutoPublished', 'autoImagesCount', 'imageCaptions', 'seoScore',
+            'humanToneScore', 'focusKeyword', 'metaDescription', 'secondaryKeywords',
+            'rewrittenByAi', 'adSenseCompliant', 'googleMapsLocation', 'updatedAt'
+          ]))
+          || (
+            existing().status == 'published'
+            && incoming().status == 'published'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['likes', 'updatedAt'])
+            && incoming().likes == existing().likes + 1
+          )
+        );
+
+      allow delete: if isValidId(articleId) && hasValidOwnerGate();
+
+      // Comments Subcollection (Master Gate checks parent article exists & is published)
+      match /comments/{commentId} {
+        allow get: if isValidId(articleId)
+          && isValidId(commentId)
+          && exists(/databases/$(database)/documents/articles/$(articleId))
+          && get(/databases/$(database)/documents/articles/$(articleId)).data.status == 'published';
+
+        allow list: if resource.data.articleId == articleId
+          && resource.data.isPublic == true;
+
+        allow create: if isValidId(articleId)
+          && isValidId(commentId)
+          && isValidComment(incoming(), articleId)
+          && incoming().id == commentId
+          && incoming().likes == 0
+          && exists(/databases/$(database)/documents/articles/$(articleId))
+          && get(/databases/$(database)/documents/articles/$(articleId)).data.status == 'published';
+
+        allow update: if isValidId(articleId)
+          && isValidId(commentId)
+          && isValidComment(incoming(), articleId)
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && (
+            (hasValidOwnerGate() && incoming().diff(existing()).affectedKeys().hasOnly([
+              'author', 'avatar', 'content', 'likes', 'isPublic'
+            ]))
+            || (
+              existing().isPublic == true
+              && incoming().isPublic == true
+              && incoming().diff(existing()).affectedKeys().hasOnly(['likes'])
+              && incoming().likes == existing().likes + 1
+            )
+          );
+
+        allow delete: if isValidId(articleId)
+          && isValidId(commentId)
+          && hasValidOwnerGate();
+      }
+    }
+
+    // Public Site Branding & Display Configuration (No private credentials)
+    match /siteSettings/{settingId} {
+      allow get: if isValidId(settingId) && settingId == 'public';
+      allow list, delete: if false;
+      allow create, update: if isValidId(settingId)
+        && settingId == 'public'
+        && isValidPublicSettings(incoming())
+        && hasValidOwnerGate();
+    }
+  }
+}

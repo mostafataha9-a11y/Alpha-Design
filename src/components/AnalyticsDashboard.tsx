@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { Article, SiteSettings, BackendSubTab, BlogAnalyticsSummary, ArticleAnalyticsItem, AdAnalyticsItem } from '../types/blog';
 import { AuthorBadge } from './AuthorBadge';
+import { fetchWithAuth, isJsonResponse, safeReadJson } from '../utils/apiAuth';
 
 interface AnalyticsDashboardProps {
   settings: SiteSettings;
@@ -58,14 +59,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/db/analytics', {
+      const res = await fetchWithAuth('/api/db/analytics', {
         headers: {
           'Accept': 'application/json',
         },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setServerAnalytics(data);
+      if (res.ok && isJsonResponse(res)) {
+        const data = await safeReadJson<BlogAnalyticsSummary>(res);
+        if (data) setServerAnalytics(data);
       }
     } catch (err) {
       console.warn('Analytics fetch note:', err);

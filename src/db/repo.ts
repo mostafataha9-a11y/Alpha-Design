@@ -95,6 +95,7 @@ const memorySessions = new Map<string, { user: DbAuthUser; expiresAt: number }>(
 const memoryApiRateLimits = new Map<string, { count: number; firstRequestAt: number; blockedUntil?: number }>();
 const memoryLoginRateLimits = new Map<string, { attemptCount: number; firstAttemptAt: number; blockedUntil?: number }>();
 const memoryLocks = new Map<string, { lockedBy: string; lockedAt: Date; expiresAt: Date }>();
+const memoryImageUsageLogs: Array<{ articleId: string; imageUrl: string; imageHash: string; caption?: string | null }> = [];
 
 const SESSIONS_CACHE_FILE = '/tmp/alpha_memory_sessions.json';
 
@@ -557,13 +558,21 @@ export async function recordImageUsage(entry: {
   format?: string;
   sizeBytes?: number;
 }): Promise<void> {
+  const safeUrl = entry.imageUrl.startsWith('data:')
+    ? `data:image-upload-${entry.articleId}-${Date.now()}`
+    : entry.imageUrl;
+
+  memoryImageUsageLogs.push({
+    articleId: entry.articleId,
+    imageUrl: safeUrl,
+    imageHash: entry.imageHash || 'hash-pending',
+    caption: entry.caption || null,
+  });
+
   if (!(await isDbReachable())) return;
 
   try {
     const id = 'img-log-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-    const safeUrl = entry.imageUrl.startsWith('data:')
-      ? `data:image-upload-${entry.articleId}-${id}`
-      : entry.imageUrl;
 
     await db.insert(imageUsageLogs).values({
       id,
@@ -579,7 +588,7 @@ export async function recordImageUsage(entry: {
       usedAt: new Date(),
     });
   } catch {
-    // Quiet fallback
+    // Quiet fallback (already stored in memoryImageUsageLogs)
   }
 }
 
@@ -632,6 +641,33 @@ export async function checkImageDuplicateInDb(
     }
   }
 
+  // Check memory image usage registry (works both offline and before/after DB sync)
+  for (const log of memoryImageUsageLogs) {
+    if (currentArticleId && log.articleId === currentArticleId) continue;
+
+    if (log.imageUrl.trim() === imageUrl.trim()) {
+      return {
+        isDuplicate: true,
+        matchedArticleId: log.articleId,
+        matchedImageUrl: log.imageUrl,
+        reason: `الرابط مطابق لصورة مستخدمة بالفعل في مقال سابق (${log.articleId}).`,
+      };
+    }
+
+    if (imageHash && log.imageHash && log.imageHash.length === 16 && imageHash.length === 16) {
+      const distance = hammingDistance(imageHash, log.imageHash);
+      if (distance <= hammingThreshold) {
+        return {
+          isDuplicate: true,
+          matchedArticleId: log.articleId,
+          matchedImageUrl: log.imageUrl,
+          distance,
+          reason: `تطابق بصري (Perceptual Duplicate) مع صورة في المقال (${log.articleId}) بمسافة هامنغ ${distance}.`,
+        };
+      }
+    }
+  }
+
   // Memory fallback deduplication check (checks both featuredImage and markdown images embedded in content)
   loadMemoryArticlesFromFile();
   for (const a of memoryArticles) {
@@ -666,6 +702,10 @@ export async function checkImageDuplicateInDb(
 
 export async function getUsedImageUrls(): Promise<Set<string>> {
   const urls = new Set<string>();
+
+  for (const l of memoryImageUsageLogs) {
+    if (l.imageUrl) urls.add(l.imageUrl.trim());
+  }
 
   if (await isDbReachable()) {
     try {

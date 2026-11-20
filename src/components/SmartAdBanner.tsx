@@ -45,6 +45,8 @@ export const SmartAdBanner: React.FC<SmartAdBannerProps> = ({
     }
   };
 
+  const adCodeRef = useRef<HTMLDivElement>(null);
+
   // Measure container for AI responsive scaling
   useEffect(() => {
     if (!containerRef.current) return;
@@ -57,49 +59,11 @@ export const SmartAdBanner: React.FC<SmartAdBannerProps> = ({
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, []);
-
-  // If slot is missing or disabled, do not render
-  if (!config || !config.enabled) {
-    return null;
-  }
-
-  // Determine styling based on placement
-  const placementStyles: Record<AdPlacementId, { wrapper: string; bannerMaxH: string; defaultH: number }> = {
-    header: {
-      wrapper: 'w-full max-w-7xl mx-auto my-3 px-3 sm:px-4',
-      bannerMaxH: 'max-h-[110px] sm:max-h-[120px]',
-      defaultH: 90,
-    },
-    sidebar: {
-      wrapper: 'w-full my-4',
-      bannerMaxH: 'max-h-[380px]',
-      defaultH: 320,
-    },
-    articleTop: {
-      wrapper: 'w-full my-5',
-      bannerMaxH: 'max-h-[140px]',
-      defaultH: 110,
-    },
-    articleMiddle: {
-      wrapper: 'w-full my-8 p-3 rounded-2xl bg-gradient-to-r from-blue-50/50 via-slate-50 to-indigo-50/50 dark:from-slate-900/60 dark:via-slate-900/40 dark:to-indigo-950/40 border border-blue-100 dark:border-slate-800',
-      bannerMaxH: 'max-h-[180px]',
-      defaultH: 140,
-    },
-    articleBottom: {
-      wrapper: 'w-full my-6',
-      bannerMaxH: 'max-h-[160px]',
-      defaultH: 130,
-    },
-  };
-
-  const currentPlacementStyle = placementStyles[placement] || placementStyles.header;
-  const maxHeightPx = config.maxHeight || currentPlacementStyle.defaultH;
-  const adCodeRef = useRef<HTMLDivElement>(null);
+  }, [config?.enabled]);
 
   // Dynamic script execution for AdSense and custom HTML/JS ad codes
   useEffect(() => {
-    if (config.type !== 'code' || !config.code || !adCodeRef.current) return;
+    if (!config || !config.enabled || config.type !== 'code' || !config.code || !adCodeRef.current) return;
 
     const container = adCodeRef.current;
     container.innerHTML = '';
@@ -153,7 +117,44 @@ export const SmartAdBanner: React.FC<SmartAdBannerProps> = ({
         console.debug('AdSense push caught safely:', err);
       }
     }
-  }, [config.code, config.type, config.aiAutoFit, placement]);
+  }, [config?.enabled, config?.code, config?.type, config?.aiAutoFit, placement]);
+
+  // If slot is missing or disabled, do not render
+  if (!config || !config.enabled) {
+    return null;
+  }
+
+  // Determine styling based on placement
+  const placementStyles: Record<AdPlacementId, { wrapper: string; bannerMaxH: string; defaultH: number }> = {
+    header: {
+      wrapper: 'w-full max-w-7xl mx-auto my-3 px-3 sm:px-4',
+      bannerMaxH: 'max-h-[110px] sm:max-h-[120px]',
+      defaultH: 90,
+    },
+    sidebar: {
+      wrapper: 'w-full my-4',
+      bannerMaxH: 'max-h-[380px]',
+      defaultH: 320,
+    },
+    articleTop: {
+      wrapper: 'w-full my-5',
+      bannerMaxH: 'max-h-[140px]',
+      defaultH: 110,
+    },
+    articleMiddle: {
+      wrapper: 'w-full my-8 p-3 rounded-2xl bg-gradient-to-r from-blue-50/50 via-slate-50 to-indigo-50/50 dark:from-slate-900/60 dark:via-slate-900/40 dark:to-indigo-950/40 border border-blue-100 dark:border-slate-800',
+      bannerMaxH: 'max-h-[180px]',
+      defaultH: 140,
+    },
+    articleBottom: {
+      wrapper: 'w-full my-6',
+      bannerMaxH: 'max-h-[160px]',
+      defaultH: 130,
+    },
+  };
+
+  const currentPlacementStyle = placementStyles[placement] || placementStyles.header;
+  const maxHeightPx = config.maxHeight || currentPlacementStyle.defaultH;
 
   // Process and sanitize AI-adapted code if code type
   const renderCodeSnippet = () => {

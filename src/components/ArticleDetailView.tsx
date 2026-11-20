@@ -35,6 +35,7 @@ import { SmartAdBanner } from './SmartAdBanner';
 import { HadaryCoinFollowWidget } from './HadaryCoinFollowWidget';
 import { parseInlineDecorText } from './InteractiveArticleRenderer';
 import { SubpageBreadcrumb } from './SubpageBreadcrumb';
+import { isJsonResponse } from '../utils/apiAuth';
 
 
 interface ArticleDetailViewProps {
@@ -61,6 +62,31 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
   const isAr = settings.language === 'ar';
   const social = settings.socialLinks;
 
+  const [copied, setCopied] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
+  const [realViews, setRealViews] = useState<number>(article?.views || 0);
+
+  // New comment form
+  const [commentAuthor, setCommentAuthor] = useState('');
+  const [commentContent, setCommentContent] = useState('');
+  const [hasLiked, setHasLiked] = useState(false);
+  const [commentSuccess, setCommentSuccess] = useState(false);
+
+  // Track real article view in database upon visit
+  useEffect(() => {
+    setRealViews(article?.views || 0);
+    if (!article?.id) return;
+    fetch(`/api/db/articles/${article.id}/view`, { method: 'POST' })
+      .then((res) => (res.ok && isJsonResponse(res) ? res.json() : null))
+      .then((data) => {
+        if (data && typeof data.views === 'number') {
+          setRealViews(data.views);
+        }
+      })
+      .catch(() => {});
+  }, [article?.id]);
+
   if (!article) {
     return (
       <div className="py-20 text-center space-y-4">
@@ -74,30 +100,6 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
       </div>
     );
   }
-
-  const [copied, setCopied] = useState(false);
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
-  const [realViews, setRealViews] = useState<number>(article.views || 0);
-
-  // Track real article view in database upon visit
-  useEffect(() => {
-    if (!article?.id) return;
-    fetch(`/api/db/articles/${article.id}/view`, { method: 'POST' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data && typeof data.views === 'number') {
-          setRealViews(data.views);
-        }
-      })
-      .catch(() => {});
-  }, [article?.id]);
-
-  // New comment form
-  const [commentAuthor, setCommentAuthor] = useState('');
-  const [commentContent, setCommentContent] = useState('');
-  const [hasLiked, setHasLiked] = useState(false);
-  const [commentSuccess, setCommentSuccess] = useState(false);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -142,7 +144,7 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
     const newComment: Comment = {
       id: 'c-' + Date.now(),
       author: commentAuthor.trim(),
-      avatar: `https://images.unsplash.com/photo-${1534528741775 + (Math.floor(Math.random() * 100))}?auto=format&fit=crop&w=150&q=80`,
+      avatar: '',
       content: commentContent.trim(),
       createdAt: isAr ? 'الآن' : 'Just now',
       likes: 0,
@@ -630,11 +632,20 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
                 key={comment.id}
                 className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 flex items-start gap-3"
               >
-                <img
-                  src={comment.avatar}
-                  alt={comment.author}
-                  className="w-9 h-9 rounded-full object-cover shrink-0"
-                />
+                {comment.avatar ? (
+                  <img
+                    src={comment.avatar}
+                    alt={comment.author}
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                    className="w-9 h-9 rounded-full object-cover shrink-0"
+                  />
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-blue-600/15 text-blue-700 dark:text-blue-300 font-black text-xs flex items-center justify-center shrink-0 border border-blue-500/20">
+                    {(comment.author || 'ز').trim().charAt(0)}
+                  </div>
+                )}
                 <div className="flex-1 space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-xs text-slate-900 dark:text-white">

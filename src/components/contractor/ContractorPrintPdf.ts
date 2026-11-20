@@ -2,6 +2,14 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { ProjectAccount, fmtEN, calculateProject } from './contractorTypes';
 
+const escapeHtml = (value: unknown): string =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 export const generatePrintableHTML = (project: ProjectAccount) => {
   const calc = calculateProject(project);
 
@@ -11,24 +19,24 @@ export const generatePrintableHTML = (project: ProjectAccount) => {
     }
     return rows
       .map((r, i) => {
-        const date = r.date || '—';
-        const amt = fmtEN(r.amount);
+        const date = escapeHtml(r.date || '—');
+        const amt = escapeHtml(fmtEN(r.amount));
         const bg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
         if (table === 'payments') {
           return `<tr style="background:${bg};">
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;font-weight:bold;color:#475569;">${i + 1}</td>
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;font-weight:600;">${date}</td>
-            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;">${r.desc || '—'}</td>
+            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;">${escapeHtml(r.desc || '—')}</td>
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;color:#16a34a;font-weight:900;font-size:13px;">${amt}</td>
-            <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;color:#334155;font-weight:600;">${r.method || 'نقدي'}</td>
+            <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;color:#334155;font-weight:600;">${escapeHtml(r.method || 'نقدي')}</td>
           </tr>`;
         }
         if (table === 'labor') {
           return `<tr style="background:${bg};">
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;font-weight:bold;color:#475569;">${i + 1}</td>
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;font-weight:600;">${date}</td>
-            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;font-weight:bold;color:#1e293b;">${r.name || '—'}</td>
-            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;">${r.work || '—'}</td>
+            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;font-weight:bold;color:#1e293b;">${escapeHtml(r.name || '—')}</td>
+            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;">${escapeHtml(r.work || '—')}</td>
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;color:#ea580c;font-weight:900;font-size:13px;">${amt}</td>
           </tr>`;
         }
@@ -36,7 +44,7 @@ export const generatePrintableHTML = (project: ProjectAccount) => {
           return `<tr style="background:${bg};">
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;font-weight:bold;color:#475569;">${i + 1}</td>
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;font-weight:600;">${date}</td>
-            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;">${r.desc || '—'}</td>
+            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;">${escapeHtml(r.desc || '—')}</td>
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;color:#9333ea;font-weight:900;font-size:13px;">${amt}</td>
           </tr>`;
         }
@@ -44,7 +52,7 @@ export const generatePrintableHTML = (project: ProjectAccount) => {
           return `<tr style="background:${bg};">
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;font-weight:bold;color:#475569;">${i + 1}</td>
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;font-weight:600;">${date}</td>
-            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;">${r.desc || '—'}</td>
+            <td style="border:1px solid #cbd5e1;padding:8px;text-align:right;">${escapeHtml(r.desc || '—')}</td>
             <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;color:#e11d48;font-weight:900;font-size:13px;">${amt}</td>
           </tr>`;
         }
@@ -72,21 +80,21 @@ export const generatePrintableHTML = (project: ProjectAccount) => {
     <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12.5px;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;overflow:hidden;">
       <tr>
         <td style="border:1px solid #cbd5e1;padding:9px 12px;background:#f1f5f9;font-weight:bold;width:130px;color:#334155;">اسم العميل:</td>
-        <td style="border:1px solid #cbd5e1;padding:9px 12px;font-weight:bold;color:#0f172a;font-size:13px;">${project.client}</td>
+        <td style="border:1px solid #cbd5e1;padding:9px 12px;font-weight:bold;color:#0f172a;font-size:13px;">${escapeHtml(project.client)}</td>
         <td style="border:1px solid #cbd5e1;padding:9px 12px;background:#f1f5f9;font-weight:bold;width:130px;color:#334155;">اسم المشروع / العملية:</td>
-        <td style="border:1px solid #cbd5e1;padding:9px 12px;font-weight:bold;color:#0f172a;">${project.name || '—'}</td>
+        <td style="border:1px solid #cbd5e1;padding:9px 12px;font-weight:bold;color:#0f172a;">${escapeHtml(project.name || '—')}</td>
       </tr>
       <tr>
         <td style="border:1px solid #cbd5e1;padding:9px 12px;background:#f1f5f9;font-weight:bold;color:#334155;">العنوان / المكان:</td>
-        <td style="border:1px solid #cbd5e1;padding:9px 12px;color:#334155;">${project.address || '—'}</td>
+        <td style="border:1px solid #cbd5e1;padding:9px 12px;color:#334155;">${escapeHtml(project.address || '—')}</td>
         <td style="border:1px solid #cbd5e1;padding:9px 12px;background:#f1f5f9;font-weight:bold;color:#334155;">تاريخ بدء المشروع:</td>
-        <td style="border:1px solid #cbd5e1;padding:9px 12px;color:#334155;">${project.date || '—'}</td>
+        <td style="border:1px solid #cbd5e1;padding:9px 12px;color:#334155;">${escapeHtml(project.date || '—')}</td>
       </tr>
       <tr>
         <td style="border:1px solid #cbd5e1;padding:9px 12px;background:#eff6ff;font-weight:900;color:#1e40af;">المبلغ المتفق عليه:</td>
         <td style="border:1px solid #cbd5e1;padding:9px 12px;color:#1d4ed8;font-weight:900;font-size:14px;background:#eff6ff;">${fmtEN(calc.agreed)} ج.م</td>
         <td style="border:1px solid #cbd5e1;padding:9px 12px;background:#f1f5f9;font-weight:bold;color:#334155;">ملاحظات الاتفاق:</td>
-        <td style="border:1px solid #cbd5e1;padding:9px 12px;color:#475569;">${project.notes || '—'}</td>
+        <td style="border:1px solid #cbd5e1;padding:9px 12px;color:#475569;">${escapeHtml(project.notes || '—')}</td>
       </tr>
     </table>
 
@@ -196,7 +204,7 @@ export const generatePrintableHTML = (project: ProjectAccount) => {
     <!-- Final Financial Summary Cards Grid -->
     <div style="background:#f8fafc;border:2px solid #cbd5e1;border-radius:12px;padding:16px;margin-bottom:24px;">
       <h3 style="margin:0 0 12px;font-size:14px;font-weight:900;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;">
-        📊 الملخص المالي الختامي لعملية: ${project.client}
+        📊 الملخص المالي الختامي لعملية: ${escapeHtml(project.client)}
       </h3>
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <tr>
@@ -402,7 +410,7 @@ export const printProjectInBrowser = (
     <html lang="ar" dir="rtl">
     <head>
       <meta charset="UTF-8">
-      <title>كشف حساب — ${project.name || project.client}</title>
+      <title>كشف حساب — ${escapeHtml(project.name || project.client)}</title>
       <style>
         @page { size: A4 portrait; margin: 8mm; }
         body { font-family: 'Cairo', 'Tajawal', 'Almarai', 'Segoe UI', Tahoma, Arial, sans-serif; margin: 0; padding: 12px; background: #fff; color: #1e293b; -webkit-print-color-adjust: exact; print-color-adjust: exact; }

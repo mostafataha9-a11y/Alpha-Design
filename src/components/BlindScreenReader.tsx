@@ -847,7 +847,17 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
   // Toggle microphone
   const handleToggleListening = () => {
     if (!voiceRecSupported) {
-      alert('التعرف الصوتي غير مدعوم في هذا المتصفح، يمكنك استخدام الأزرار السريعة أو الكتابة.');
+      const notice = 'التعرف الصوتي غير مدعوم في هذا المتصفح، يمكنك استخدام الأزرار السريعة أو الكتابة.';
+      setDialogueHistory((prev) => [
+        ...prev,
+        {
+          id: 'msg-notice-' + Date.now(),
+          sender: 'assistant',
+          text: notice,
+          timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+      startStreamingSingleText(notice);
       return;
     }
 

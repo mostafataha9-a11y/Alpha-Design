@@ -43,6 +43,7 @@ import { ContractorNotebook } from './ContractorNotebook';
 import { SocialPublishingBotDashboard } from './SocialPublishingBotDashboard';
 import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { AdminSecurityView } from './AdminSecurityView';
+import { fetchWithAuth, isJsonResponse } from '../utils/apiAuth';
 
 interface BackendDashboardProps {
   settings: SiteSettings;
@@ -108,9 +109,8 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
     };
     onUpdateSettings(updatedSettings);
     try {
-      await fetch('/api/db/settings', {
+      await fetchWithAuth('/api/db/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedSettings),
       });
       triggerToast(
@@ -130,10 +130,8 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
     setSupervisors(updated);
     try {
       localStorage.setItem('alpha_decor_supervisors_v2', JSON.stringify(updated));
-      await fetch('/api/admin/supervisors', {
+      await fetchWithAuth('/api/admin/supervisors', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ supervisors: updated }),
       });
     } catch {}
@@ -170,10 +168,10 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
 
   // Sync supervisors from database
   useEffect(() => {
-    fetch('/api/admin/supervisors', { credentials: 'include' })
-      .then((res) => res.json())
+    fetchWithAuth('/api/admin/supervisors')
+      .then((res) => (res.ok && isJsonResponse(res) ? res.json() : null))
       .then((data) => {
-        if (data.supervisors && Array.isArray(data.supervisors) && data.supervisors.length > 0) {
+        if (data?.supervisors && Array.isArray(data.supervisors) && data.supervisors.length > 0) {
           setSupervisors(data.supervisors);
         }
       })
@@ -212,10 +210,8 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
     setSupervisors(updated);
     try {
       localStorage.setItem('alpha_decor_supervisors_v2', JSON.stringify(updated));
-      await fetch('/api/admin/supervisors', {
+      await fetchWithAuth('/api/admin/supervisors', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ supervisors: updated }),
       });
     } catch (err) {
@@ -247,10 +243,8 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
     setSupervisors(updated);
     try {
       localStorage.setItem('alpha_decor_supervisors_v2', JSON.stringify(updated));
-      await fetch('/api/admin/supervisors', {
+      await fetchWithAuth('/api/admin/supervisors', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ supervisors: updated }),
       });
     } catch (e) {

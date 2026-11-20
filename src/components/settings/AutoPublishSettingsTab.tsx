@@ -10,6 +10,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { SiteSettings } from '../../types/blog';
+import { isJsonResponse } from '../../utils/apiAuth';
 
 interface AutoPublishSettingsTabProps {
   formData: SiteSettings;
@@ -26,8 +27,10 @@ export const AutoPublishSettingsTab: React.FC<AutoPublishSettingsTabProps> = ({
 
   useEffect(() => {
     fetch('/api/auto-publish/status')
-      .then((r) => r.json())
-      .then((d) => setStatusData(d))
+      .then((r) => (r.ok && isJsonResponse(r) ? r.json() : null))
+      .then((d) => {
+        if (d) setStatusData(d);
+      })
       .catch((err) => console.warn('Could not fetch auto publish status:', err));
   }, []);
 

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { AdminUser, SiteSettings } from '../types/blog';
 import { AuthorBadge } from './AuthorBadge';
+import { fetchWithAuth, isJsonResponse, safeReadJson } from '../utils/apiAuth';
 
 interface AdminSecurityViewProps {
   currentUser: AdminUser;
@@ -92,19 +93,26 @@ export const AdminSecurityView: React.FC<AdminSecurityViewProps> = ({
 
   const handleTestGenerateEmergencyKey = async () => {
     setIsGeneratingEmergencyKey(true);
+    setErrorMsg(null);
     try {
-      const res = await fetch('/api/auth/2fa/emergency-key/request', {
+      const res = await fetchWithAuth('/api/auth/2fa/emergency-key/request', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ email: adminEmail }),
       });
-      const data = await res.json();
-      if (res.ok && data.formattedKey) {
+      if (!isJsonResponse(res) || res.status === 404) {
+        setErrorMsg(
+          isAr
+            ? 'طلب مفتاح الطوارئ يتطلب تشغيل الخادم الخلفي للمدونة (Express Backend).'
+            : 'Emergency key generation requires the backend server.'
+        );
+        return;
+      }
+      const data = await safeReadJson<any>(res);
+      if (res.ok && data?.formattedKey) {
         setEmergencyKey14(data.formattedKey);
         showToast(isAr ? 'تم توليد مفتاح الطوارئ المكون من 14 حرفاً وإرساله بنجاح!' : '14-character emergency key generated!');
       } else {
-        setErrorMsg(data.error || 'فشل توليد مفتاح الطوارئ.');
+        setErrorMsg(data?.error || 'فشل توليد مفتاح الطوارئ.');
       }
     } catch {
       setErrorMsg(isAr ? 'فشل الاتصال بالخادم.' : 'Connection failed.');
@@ -129,27 +137,24 @@ export const AdminSecurityView: React.FC<AdminSecurityViewProps> = ({
   useEffect(() => {
     const fetchSecurityData = async () => {
       try {
-        const res2Fa = await fetch('/api/admin/2fa/setup', {
+        const res2Fa = await fetchWithAuth('/api/admin/2fa/setup', {
           method: 'POST',
-          credentials: 'include',
         });
-        if (res2Fa.ok) {
-          const data = await res2Fa.json();
-          if (data.secret) setTwoFaSecret(data.secret);
-          if (data.otpauthUrl) setOtpUrl(data.otpauthUrl);
-          if (Array.isArray(data.backupCodes)) setBackupCodes(data.backupCodes);
+        if (res2Fa.ok && isJsonResponse(res2Fa)) {
+          const data = await safeReadJson<any>(res2Fa);
+          if (data?.secret) setTwoFaSecret(data.secret);
+          if (data?.otpauthUrl) setOtpUrl(data.otpauthUrl);
+          if (Array.isArray(data?.backupCodes)) setBackupCodes(data.backupCodes);
         }
       } catch (e) {
         console.warn('2FA fetch note:', e);
       }
 
       try {
-        const resSup = await fetch('/api/admin/supervisors', {
-          credentials: 'include',
-        });
-        if (resSup.ok) {
-          const data = await resSup.json();
-          if (Array.isArray(data.supervisors)) {
+        const resSup = await fetchWithAuth('/api/admin/supervisors');
+        if (resSup.ok && isJsonResponse(resSup)) {
+          const data = await safeReadJson<any>(resSup);
+          if (Array.isArray(data?.supervisors)) {
             setSupervisorsCount(data.supervisors.length);
           }
         }
@@ -172,16 +177,23 @@ export const AdminSecurityView: React.FC<AdminSecurityViewProps> = ({
 
     setIsUpdatingEmail(true);
     try {
-      const res = await fetch('/api/admin/update-profile', {
+      const res = await fetchWithAuth('/api/admin/update-profile', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ email: adminEmail.trim() }),
       });
 
-      const data = await res.json();
+      if (!isJsonResponse(res) || res.status === 404) {
+        setErrorMsg(
+          isAr
+            ? 'تحديث البريد الرسمي عبر الخادم غير متاح على الاستضافة الثابتة.'
+            : 'Updating admin email requires a running backend server.'
+        );
+        return;
+      }
+
+      const data = await safeReadJson<any>(res);
       if (!res.ok) {
-        setErrorMsg(data.error || (isAr ? 'فشل تحديث البريد.' : 'Failed to update email.'));
+        setErrorMsg(data?.error || (isAr ? 'فشل تحديث البريد.' : 'Failed to update email.'));
       } else {
         setEmailSuccess(true);
         onUpdateAdminUser({ email: adminEmail.trim() });
@@ -210,16 +222,23 @@ export const AdminSecurityView: React.FC<AdminSecurityViewProps> = ({
 
     setIsUpdatingPassword(true);
     try {
-      const res = await fetch('/api/admin/update-profile', {
+      const res = await fetchWithAuth('/api/admin/update-profile', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ password: newPassword.trim() }),
       });
 
-      const data = await res.json();
+      if (!isJsonResponse(res) || res.status === 404) {
+        setErrorMsg(
+          isAr
+            ? 'يرجى استخدام خيار «نسيت كلمة المرور؟» من نافذة تسجيل الدخول لتغيير كلمة المرور على هذه البيئة.'
+            : 'Backend profile endpoint unavailable on static host.'
+        );
+        return;
+      }
+
+      const data = await safeReadJson<any>(res);
       if (!res.ok) {
-        setErrorMsg(data.error || (isAr ? 'فشل تعيين كلمة المرور.' : 'Failed to set password.'));
+        setErrorMsg(data?.error || (isAr ? 'فشل تعيين كلمة المرور.' : 'Failed to set password.'));
       } else {
         setPasswordSuccess(true);
         setNewPassword('');
@@ -245,16 +264,23 @@ export const AdminSecurityView: React.FC<AdminSecurityViewProps> = ({
 
     setIsVerifying2FA(true);
     try {
-      const res = await fetch('/api/admin/2fa/verify', {
+      const res = await fetchWithAuth('/api/admin/2fa/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ token: verificationCode.trim(), secret: twoFaSecret }),
       });
 
-      const data = await res.json();
+      if (!isJsonResponse(res) || res.status === 404) {
+        setErrorMsg(
+          isAr
+            ? 'التحقق من تطبيق المصادقة الثنائية يتطلب الخادم الخلفي.'
+            : '2FA verification requires backend server.'
+        );
+        return;
+      }
+
+      const data = await safeReadJson<any>(res);
       if (!res.ok) {
-        setErrorMsg(data.error || (isAr ? 'كود التحقق غير صحيح.' : 'Invalid 2FA code.'));
+        setErrorMsg(data?.error || (isAr ? 'كود التحقق غير صحيح.' : 'Invalid 2FA code.'));
       } else {
         setIs2FAEnabled(true);
         setTwoFaSuccess(true);

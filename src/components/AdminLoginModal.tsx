@@ -17,15 +17,24 @@ import {
 } from 'lucide-react';
 import { AdminUser, SiteSettings } from '../types/blog';
 import { AuthorBadge } from './AuthorBadge';
-
-interface AdminLoginModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onLoginSuccess: (user: AdminUser) => void;
-  settings: SiteSettings;
-}
+import {
+  OWNER_LOGIN_VERIFIER_HASH,
+  deriveOwnerLoginVerifier,
+  deriveAndStoreOwnerGateProof,
+} from '../services/firestoreSync';
 
 const OFFICIAL_OWNER_EMAIL = 'mahmoudahmedhessien032@gmail.com';
+
+function generateSecure6DigitOtp(): string {
+  try {
+    if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+      const arr = new Uint32Array(1);
+      window.crypto.getRandomValues(arr);
+      return String(100000 + (arr[0] % 900000));
+    }
+  } catch {}
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
 
 function toSafeText(value: unknown, fallback = ''): string {
   if (typeof value === 'string') return value;
@@ -38,6 +47,13 @@ function toSafeText(value: unknown, fallback = ''): string {
   return fallback;
 }
 
+interface AdminLoginModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onLoginSuccess: (user: AdminUser) => void;
+  settings: SiteSettings;
+}
+
 export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   isOpen,
   onClose,
@@ -48,7 +64,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const ownerName = toSafeText(settings?.authorName, 'الحضرى محمود') || 'الحضرى محمود';
 
   const [mode, setMode] = useState<'login' | 'verifyCode' | 'changePassword'>('login');
-  const [email, setEmail] = useState(OFFICIAL_OWNER_EMAIL);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
@@ -57,7 +73,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const [otpCode, setOtpCode] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
   const [emailSent, setEmailSent] = useState(false);
-  const [previewCode, setPreviewCode] = useState('123456');
+  const [previewCode, setPreviewCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
   const [copiedOtp, setCopiedOtp] = useState(false);
 
@@ -76,6 +92,11 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const isMountedRef = useRef(true);
   const otpInputRef = useRef<HTMLInputElement | null>(null);
   const timersRef = useRef<number[]>([]);
+  const staticOtpRef = useRef<string>('');
+  const verifiedCredentialsRef = useRef<{ email: string; password: string }>({
+    email: OFFICIAL_OWNER_EMAIL,
+    password: '',
+  });
 
   const scheduleSafeTimeout = (fn: () => void, ms: number) => {
     const id = window.setTimeout(() => {
@@ -106,12 +127,15 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     if (!isOpen) {
       clearPendingTimers();
       setMode('login');
+      setEmail('');
       setPassword('');
       setShowPassword(false);
       setChallengeId('');
       setOtpCode('');
       setMaskedEmail('');
-      setPreviewCode('123456');
+      setPreviewCode('');
+      staticOtpRef.current = '';
+      verifiedCredentialsRef.current = { email: OFFICIAL_OWNER_EMAIL, password: '' };
       setEmailSent(false);
       setResendCooldown(0);
       setCopiedOtp(false);
@@ -160,21 +184,25 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           body: JSON.stringify(payload),
         });
 
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        const isJson = contentType.includes('application/json');
         const rawText = await response.text();
         let data: Record<string, unknown> | null = null;
-        try {
-          const parsed = rawText ? JSON.parse(rawText) : {};
-          data = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
-        } catch {
-          data = null;
+        if (isJson) {
+          try {
+            const parsed = rawText ? JSON.parse(rawText) : {};
+            data = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+          } catch {
+            data = null;
+          }
         }
 
-        if ((response.status === 502 || response.status === 503 || response.status === 504 || response.status === 404) && attempt === 0) {
+        if ((response.status === 502 || response.status === 503 || response.status === 504) && attempt === 0) {
           await new Promise((r) => setTimeout(r, 450));
           continue;
         }
 
-        return { ok: response.ok, status: response.status, data, rawText };
+        return { ok: response.ok, status: response.status, isJson, data, rawText };
       } catch (err) {
         lastError = err;
         if (attempt === 0) {
@@ -186,7 +214,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     throw lastError instanceof Error ? lastError : new Error('Network error');
   };
 
-  // Step 1: Verify Email + Password & Request Email OTP Code (Fallback direct login if API missing)
+  // Step 1: Verify Email + Password & Request Email OTP Code (strict SHA-256 verifier fallback on static hosting)
   const handleStep1Login = async (e?: React.FormEvent) => {
     if (e) {
       e.preventDefault();
@@ -201,8 +229,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     if (cleanEmail !== OFFICIAL_OWNER_EMAIL) {
       setErrorMsg(
         isAr
-          ? `عذراً: الدخول مقتصر على البريد الرسمي المعتمد للمالك فقط (${OFFICIAL_OWNER_EMAIL}).`
-          : `Only the official owner email (${OFFICIAL_OWNER_EMAIL}) is authorized.`
+          ? 'عذراً: البريد الإلكتروني المدخل غير معتمد للدخول إلى لوحة الإدارة.'
+          : 'The entered email address is not authorized for admin access.'
       );
       return;
     }
@@ -215,89 +243,115 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
     setIsVerifying(true);
     try {
-      let res: { ok: boolean; status: number; data: Record<string, any> | null };
+      let apiHandled = false;
+      let res: { ok: boolean; status: number; isJson: boolean; data: Record<string, any> | null } | null = null;
+
       try {
         res = await postAuthJson('/api/auth/login', {
           email: cleanEmail,
           password: trimmedPassword,
         });
-        if (!res || !res.ok) throw new Error('API route unavailable');
+        // Backend exists only when response is JSON and not HTML 404 SPA fallback
+        if (res && res.isJson && res.status !== 404) {
+          apiHandled = true;
+        }
       } catch {
-        // Fallback direct challenge simulation on static hosting
-        res = {
-          ok: true,
-          status: 200,
-          data: {
-            requiresEmailCode: true,
-            challengeId: 'local-session-challenge',
-            maskedEmail: OFFICIAL_OWNER_EMAIL,
-            emailSent: false,
-            previewCode: '123456',
-          }
-        };
+        apiHandled = false;
       }
 
       if (!isMountedRef.current) return;
 
-      const { ok, status, data } = res;
+      if (apiHandled && res) {
+        const { ok, status, data } = res;
+        if (!ok || !data) {
+          const serverErr = toSafeText(data?.error) || toSafeText(data?.message);
+          setErrorMsg(
+            serverErr ||
+              (status >= 500
+                ? isAr
+                  ? `استجابة غير متوقعة من خادم المصادقة (رمز ${status}). يرجى تحديث الصفحة والمحاولة مجدداً.`
+                  : `Authentication server returned status ${status}.`
+                : isAr
+                  ? 'البريد الإلكتروني أو كلمة المرور غير صحيحة.'
+                  : 'Invalid credentials.')
+          );
+          return;
+        }
 
-      if (!ok || !data) {
-        const serverErr = toSafeText(data?.error) || toSafeText(data?.message);
-        setErrorMsg(
-          serverErr ||
-            (status >= 500
+        verifiedCredentialsRef.current = { email: cleanEmail, password: trimmedPassword };
+
+        const nextChallengeId = toSafeText(data.challengeId);
+        if (Boolean(data.requiresEmailCode) && nextChallengeId) {
+          const nextMaskedEmail = toSafeText(data.maskedEmail, cleanEmail) || cleanEmail;
+          const wasEmailSent = Boolean(data.emailSent);
+          const nextPreviewCode = toSafeText(data.previewCode, '');
+
+          setChallengeId(nextChallengeId);
+          setMaskedEmail(nextMaskedEmail);
+          setEmailSent(wasEmailSent);
+          setPreviewCode(nextPreviewCode);
+          setOtpCode('');
+          setResendCooldown(30);
+          setMode('verifyCode');
+          setSuccessMsg(
+            wasEmailSent
               ? isAr
-                ? `استجابة غير متوقعة من خادم المصادقة (رمز ${status}). يرجى تحديث الصفحة والمحاولة مجدداً.`
-                : `Authentication server returned status ${status}.`
+                ? `تم إرسال كود تسجيل الدخول المكون من 6 أرقام إلى بريدك (${nextMaskedEmail}).`
+                : `A 6-digit login code has been sent to ${nextMaskedEmail}.`
               : isAr
-                ? 'البريد الإلكتروني أو كلمة المرور غير صحيحة.'
-                : 'Invalid credentials.')
-        );
+                ? `تم التحقق من كلمة المرور وتوليد كود التحقق (${nextPreviewCode}) نظراً لعدم تهيئة خادم البريد.`
+                : `Password verified. Use verification code ${nextPreviewCode} to sign in.`
+          );
+          return;
+        }
+
+        await deriveAndStoreOwnerGateProof(cleanEmail, trimmedPassword);
+        const rawUser = (data.user && typeof data.user === 'object' ? data.user : {}) as Record<string, unknown>;
+        const user: AdminUser = {
+          name: toSafeText(rawUser.name, ownerName) || ownerName,
+          role: rawUser.role === 'supervisor' ? 'supervisor' : 'owner',
+          email: toSafeText(rawUser.email, OFFICIAL_OWNER_EMAIL) || OFFICIAL_OWNER_EMAIL,
+          isLoggedIn: true,
+          mustChangePassword: Boolean(rawUser.mustChangePassword),
+        };
+        onLoginSuccess(user);
+        onClose();
         return;
       }
 
-      const nextChallengeId = toSafeText(data.challengeId, 'local-session-challenge');
-      if (Boolean(data.requiresEmailCode) || nextChallengeId) {
-        const nextMaskedEmail = toSafeText(data.maskedEmail, cleanEmail) || cleanEmail;
-        const wasEmailSent = Boolean(data.emailSent);
-        const nextPreviewCode = toSafeText(data.previewCode, '123456');
+      // Pure Static Hosting Mode (Vercel): strictly verify SHA-256 owner password digest
+      const loginVerifier = await deriveOwnerLoginVerifier(cleanEmail, trimmedPassword);
+      if (!isMountedRef.current) return;
 
-        setChallengeId(nextChallengeId);
-        setMaskedEmail(nextMaskedEmail);
-        setEmailSent(wasEmailSent);
-        setPreviewCode(nextPreviewCode);
-        setOtpCode('');
-        setResendCooldown(30);
-        setMode('verifyCode');
-        setSuccessMsg(
-          wasEmailSent
-            ? isAr
-              ? `تم إرسال كود تسجيل الدخول المكون من 6 أرقام إلى بريدك (${nextMaskedEmail}).`
-              : `A 6-digit login code has been sent to ${nextMaskedEmail}.`
-            : isAr
-              ? 'تم التحقق من كلمة المرور بنجاح. أدخل كود التحقق (123456) لإتمام الدخول.'
-              : 'Password verified. Enter verification code 123456 to sign in.'
-        );
+      if (loginVerifier !== OWNER_LOGIN_VERIFIER_HASH) {
+        setErrorMsg(isAr ? 'البريد الإلكتروني أو كلمة المرور غير صحيحة.' : 'Invalid email or password.');
         return;
       }
 
-      const rawUser = (data.user && typeof data.user === 'object' ? data.user : {}) as Record<string, unknown>;
-      const user: AdminUser = {
-        name: toSafeText(rawUser.name, ownerName) || ownerName,
-        role: (rawUser.role === 'supervisor' ? 'supervisor' : 'owner'),
-        email: toSafeText(rawUser.email, OFFICIAL_OWNER_EMAIL) || OFFICIAL_OWNER_EMAIL,
-        isLoggedIn: true,
-        mustChangePassword: Boolean(rawUser.mustChangePassword),
-      };
-      onLoginSuccess(user);
-      onClose();
+      verifiedCredentialsRef.current = { email: cleanEmail, password: trimmedPassword };
+      const generatedOtp = generateSecure6DigitOtp();
+      staticOtpRef.current = generatedOtp;
+
+      setChallengeId('local-session-challenge');
+      setMaskedEmail(cleanEmail);
+      setEmailSent(false);
+      setPreviewCode(generatedOtp);
+      setOtpCode('');
+      setResendCooldown(30);
+      setMode('verifyCode');
+      setSuccessMsg(
+        isAr
+          ? `تم التحقق من كلمة المرور بنجاح. أدخل كود التحقق (${generatedOtp}) لإتمام الدخول.`
+          : `Password verified. Enter verification code ${generatedOtp} to complete sign-in.`
+      );
     } catch (err) {
       console.error('Login step 1 error:', err);
       if (isMountedRef.current) {
-        // Fallback direct success on network/routing failure
-        setChallengeId('local-session-challenge');
-        setMode('verifyCode');
-        setSuccessMsg(isAr ? 'أدخل كود التحقق السريع (123456) للمتابعة.' : 'Enter verification code 123456.');
+        setErrorMsg(
+          isAr
+            ? 'تعذر إتمام التحقق من بيانات الدخول حالياً. يرجى المحاولة مرة أخرى.'
+            : 'Unable to verify credentials right now. Please try again.'
+        );
       }
     } finally {
       if (isMountedRef.current) {
@@ -318,39 +372,60 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     setSuccessMsg('');
 
     const cleanCode = otpCode.replace(/\s+/g, '').trim();
-    if (!/^\d{6}$/.test(cleanCode) && cleanCode !== '123456') {
-      setErrorMsg(isAr ? 'يرجى إدخال كود التحقق المكون من 6 أرقام بشكل صحيح (مثال: 123456).' : 'Please enter the 6-digit verification code (e.g. 123456).');
+    if (!/^\d{6}$/.test(cleanCode)) {
+      setErrorMsg(isAr ? 'يرجى إدخال كود التحقق المكون من 6 أرقام بشكل صحيح.' : 'Please enter the 6-digit verification code.');
       return;
     }
 
     setIsVerifying(true);
     try {
-      let res: { ok: boolean; status: number; data: Record<string, any> | null };
-      try {
-        res = await postAuthJson('/api/auth/login/verify-code', {
-          challengeId,
-          code: cleanCode,
-        });
-        if (!res || !res.ok) throw new Error('API route unavailable');
-      } catch {
-        res = {
-          ok: true,
-          status: 200,
-          data: {
-            user: {
-              name: ownerName,
-              role: 'owner',
-              email: OFFICIAL_OWNER_EMAIL,
-              mustChangePassword: false,
-            }
-          }
+      // Static challenge verification
+      if (challengeId === 'local-session-challenge') {
+        const expectedOtp = staticOtpRef.current || previewCode;
+        if (!expectedOtp || cleanCode !== expectedOtp) {
+          setErrorMsg(isAr ? 'كود التحقق المدخل غير صحيح. يرجى مراجعة الكود والمحاولة مجدداً.' : 'Verification code is incorrect.');
+          return;
+        }
+
+        if (verifiedCredentialsRef.current.password) {
+          await deriveAndStoreOwnerGateProof(
+            verifiedCredentialsRef.current.email,
+            verifiedCredentialsRef.current.password
+          );
+        }
+
+        const user: AdminUser = {
+          name: ownerName,
+          role: 'owner',
+          email: OFFICIAL_OWNER_EMAIL,
+          isLoggedIn: true,
+          mustChangePassword: false,
         };
+        setSuccessMsg(isAr ? 'تم تأكيد الكود وتسجيل الدخول بنجاح إلى لوحة الإدارة!' : 'Verified and signed in successfully!');
+        scheduleSafeTimeout(() => {
+          onLoginSuccess(user);
+          onClose();
+        }, 250);
+        return;
       }
+
+      const res = await postAuthJson('/api/auth/login/verify-code', {
+        challengeId,
+        code: cleanCode,
+      });
 
       if (!isMountedRef.current) return;
 
-      const { ok, status, data } = res;
+      if (!res.isJson || res.status === 404) {
+        setErrorMsg(
+          isAr
+            ? 'انتهت جلسة التحقق أو تغيرت بيئة الخادم. يرجى العودة وإعادة تسجيل الدخول.'
+            : 'Verification session expired. Please sign in again.'
+        );
+        return;
+      }
 
+      const { ok, status, data } = res;
       if (!ok || !data) {
         setErrorMsg(
           toSafeText(data?.error) ||
@@ -360,10 +435,17 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         return;
       }
 
+      if (verifiedCredentialsRef.current.password) {
+        await deriveAndStoreOwnerGateProof(
+          verifiedCredentialsRef.current.email,
+          verifiedCredentialsRef.current.password
+        );
+      }
+
       const rawUser = (data.user && typeof data.user === 'object' ? data.user : {}) as Record<string, unknown>;
       const user: AdminUser = {
         name: toSafeText(rawUser.name, ownerName) || ownerName,
-        role: (rawUser.role === 'supervisor' ? 'supervisor' : 'owner'),
+        role: rawUser.role === 'supervisor' ? 'supervisor' : 'owner',
         email: toSafeText(rawUser.email, OFFICIAL_OWNER_EMAIL) || OFFICIAL_OWNER_EMAIL,
         isLoggedIn: true,
         mustChangePassword: Boolean(rawUser.mustChangePassword),
@@ -385,15 +467,11 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     } catch (err) {
       console.error('Verify OTP error:', err);
       if (isMountedRef.current) {
-        const fallbackUser: AdminUser = {
-          name: ownerName,
-          role: 'owner',
-          email: OFFICIAL_OWNER_EMAIL,
-          isLoggedIn: true,
-          mustChangePassword: false,
-        };
-        onLoginSuccess(fallbackUser);
-        onClose();
+        setErrorMsg(
+          isAr
+            ? 'تعذر الاتصال بخادم التحقق لإتمام التأكيد. يرجى المحاولة مرة أخرى.'
+            : 'Failed to contact verification server.'
+        );
       }
     } finally {
       if (isMountedRef.current) {
@@ -410,21 +488,25 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     setIsResending(true);
 
     try {
-      let res: { ok: boolean; status: number; data: Record<string, any> | null };
-      try {
-        res = await postAuthJson('/api/auth/login/resend-code', { challengeId });
-        if (!res || !res.ok) throw new Error('API route unavailable');
-      } catch {
-        res = {
-          ok: true,
-          status: 200,
-          data: { emailSent: true, maskedEmail: OFFICIAL_OWNER_EMAIL, previewCode: '123456' }
-        };
+      if (challengeId === 'local-session-challenge') {
+        const nextOtp = generateSecure6DigitOtp();
+        staticOtpRef.current = nextOtp;
+        setEmailSent(false);
+        setPreviewCode(nextOtp);
+        setResendCooldown(30);
+        setSuccessMsg(isAr ? `تم توليد كود تحقق جديد بنجاح: ${nextOtp}` : `Generated new verification code: ${nextOtp}`);
+        return;
       }
+
+      const res = await postAuthJson('/api/auth/login/resend-code', { challengeId });
       if (!isMountedRef.current) return;
 
-      const { ok, status, data } = res;
+      if (!res.isJson || res.status === 404) {
+        setErrorMsg(isAr ? 'انتهت جلسة التحقق. يرجى العودة لتسجيل الدخول من جديد.' : 'Session expired.');
+        return;
+      }
 
+      const { ok, status, data } = res;
       if (!ok || !data) {
         setErrorMsg(
           toSafeText(data?.error) ||
@@ -436,8 +518,9 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
       const wasEmailSent = Boolean(data.emailSent);
       const nextMaskedEmail = toSafeText(data.maskedEmail, maskedEmail) || maskedEmail;
+      const nextCode = toSafeText(data.previewCode, '');
       setEmailSent(wasEmailSent);
-      setPreviewCode(toSafeText(data.previewCode, '123456'));
+      setPreviewCode(nextCode);
       setResendCooldown(30);
       setSuccessMsg(
         wasEmailSent
@@ -445,15 +528,13 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             ? `تمت إعادة إرسال كود تحقق جديد إلى (${nextMaskedEmail}).`
             : `A new verification code was sent to ${nextMaskedEmail}.`
           : isAr
-            ? 'تم توليد كود تحقق جديد بنجاح: 123456'
-            : 'Generated a new verification code: 123456'
+            ? `تم توليد كود تحقق جديد بنجاح: ${nextCode}`
+            : `Generated a new verification code: ${nextCode}`
       );
     } catch (err) {
       console.error('Resend OTP error:', err);
       if (isMountedRef.current) {
-        setPreviewCode('123456');
-        setResendCooldown(30);
-        setSuccessMsg(isAr ? 'تم توليد كود تجريبي مؤقت بنجاح: 123456' : 'Generated preview code: 123456');
+        setErrorMsg(isAr ? 'تعذر إعادة إرسال الكود حالياً.' : 'Failed to resend code.');
       }
     } finally {
       if (isMountedRef.current) {
@@ -463,7 +544,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   };
 
   const handleCopyPreviewCode = () => {
-    const codeToCopy = previewCode || '123456';
+    const codeToCopy = previewCode || staticOtpRef.current || '';
+    if (!codeToCopy) return;
     setOtpCode(codeToCopy);
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
@@ -507,21 +589,23 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
     setIsVerifying(true);
     try {
-      let res: { ok: boolean; status: number; data: Record<string, any> | null };
-      try {
-        res = await postAuthJson('/api/auth/change-password', {
-          currentPassword: trimmedCurrent,
-          newPassword: trimmedNew,
-        });
-        if (!res || !res.ok) throw new Error('API route unavailable');
-      } catch {
-        res = { ok: true, status: 200, data: { success: true } };
-      }
+      const res = await postAuthJson('/api/auth/change-password', {
+        currentPassword: trimmedCurrent,
+        newPassword: trimmedNew,
+      });
 
       if (!isMountedRef.current) return;
 
-      const { ok, status, data } = res;
+      if (!res.isJson || res.status === 404) {
+        setErrorMsg(
+          isAr
+            ? 'تغيير كلمة المرور يتطلب الاتصال بخادم قاعدة البيانات الرئيسي.'
+            : 'Changing password requires connecting to the backend database server.'
+        );
+        return;
+      }
 
+      const { ok, status, data } = res;
       if (!ok || !data) {
         setErrorMsg(
           toSafeText(data?.error) ||
@@ -549,10 +633,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     } catch (err) {
       console.error('Change password failed:', err);
       if (isMountedRef.current) {
-        setSuccessMsg(isAr ? 'تم تحديث كلمة المرور بنجاح.' : 'Password updated successfully.');
-        scheduleSafeTimeout(() => {
-          onClose();
-        }, 600);
+        setErrorMsg(isAr ? 'تعذر تحديث كلمة المرور بسبب خطأ في الاتصال.' : 'Failed to update password.');
       }
     } finally {
       if (isMountedRef.current) {
@@ -632,9 +713,6 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 <span className="text-xs font-bold text-slate-900 dark:text-white block truncate">
                   {ownerName}
                 </span>
-                <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium block truncate" dir="ltr">
-                  {OFFICIAL_OWNER_EMAIL}
-                </span>
               </div>
             </div>
 
@@ -673,7 +751,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                     dir="ltr"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder={OFFICIAL_OWNER_EMAIL}
+                    placeholder={isAr ? 'أدخل البريد الإلكتروني المعتمد...' : 'Enter authorized email...'}
                     className="w-full ps-10 pe-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                   />
                 </div>
@@ -742,46 +820,52 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
           {mode === 'verifyCode' && (
             <form key="form-step2-verify" noValidate onSubmit={handleVerifyEmailCode} className="space-y-4">
-              <div
-                className={`p-3.5 rounded-2xl border text-xs leading-relaxed ${
-                  emailSent
-                    ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
-                    : 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200'
-                }`}
-              >
-                <div key="otp-preview-box" className="space-y-2">
+              {emailSent ? (
+                <div className="p-3.5 rounded-2xl border text-xs leading-relaxed bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200">
                   <p>
                     {isAr
-                      ? 'تم التحقق بنجاح. يمكنك استخدام كود التحقق السريع (123456) وتعبئته مباشرة أدناه:'
-                      : 'Verified successfully. You can use verification code 123456 below:'}
+                      ? `تم إرسال رسالة تحتوي على كود التحقق المكون من 6 أرقام إلى بريدك الإلكتروني (${maskedEmail || 'البريد المعتمد'}). يرجى إدخاله أدناه:`
+                      : `A 6-digit verification code was sent to ${maskedEmail || 'your email'}. Please enter it below:`}
                   </p>
-                  <div className="flex items-center gap-2 pt-1">
-                    <code
-                      dir="ltr"
-                      className="flex-1 py-2 px-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 font-mono text-base font-black tracking-[0.3em] text-center text-blue-700 dark:text-blue-300 select-all"
-                    >
-                      {previewCode || '123456'}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={handleCopyPreviewCode}
-                      className="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
-                    >
-                      {copiedOtp ? (
-                        <span key="copy-done" className="inline-flex items-center gap-1.5">
-                          <Check className="w-3.5 h-3.5" />
-                          <span>{isAr ? 'تم التعبئة' : 'Filled'}</span>
-                        </span>
-                      ) : (
-                        <span key="copy-idle" className="inline-flex items-center gap-1.5">
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>{isAr ? 'تعبئة الكود' : 'Use Code'}</span>
-                        </span>
-                      )}
-                    </button>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-2xl border text-xs leading-relaxed bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200">
+                  <div key="otp-preview-box" className="space-y-2">
+                    <p>
+                      {isAr
+                        ? `تم التحقق بنجاح. يمكنك استخدام كود التحقق (${previewCode || '------'}) وتعبئته مباشرة أدناه:`
+                        : `Verified successfully. You can use verification code (${previewCode || '------'}) below:`}
+                    </p>
+                    {previewCode && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <code
+                          dir="ltr"
+                          className="flex-1 py-2 px-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 font-mono text-base font-black tracking-[0.3em] text-center text-blue-700 dark:text-blue-300 select-all"
+                        >
+                          {previewCode}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={handleCopyPreviewCode}
+                          className="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                        >
+                          {copiedOtp ? (
+                            <span key="copy-done" className="inline-flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5" />
+                              <span>{isAr ? 'تم التعبئة' : 'Filled'}</span>
+                            </span>
+                          ) : (
+                            <span key="copy-idle" className="inline-flex items-center gap-1.5">
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>{isAr ? 'تعبئة الكود' : 'Use Code'}</span>
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
+              )}
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
@@ -797,7 +881,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   maxLength={6}
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value.replace(/[^\d]/g, '').slice(0, 6))}
-                  placeholder="123456"
+                  placeholder="••••••"
                   className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-center font-mono text-xl font-black tracking-[0.45em] focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                 />
               </div>

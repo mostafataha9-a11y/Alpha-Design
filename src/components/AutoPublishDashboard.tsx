@@ -17,7 +17,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { Article, SiteSettings } from '../types/blog';
-import { fetchWithAuth } from '../utils/apiAuth';
+import { fetchWithAuth, isJsonResponse } from '../utils/apiAuth';
 
 interface AutoPublishDashboardProps {
   settings: SiteSettings;
@@ -93,7 +93,7 @@ export const AutoPublishDashboard: React.FC<AutoPublishDashboardProps> = ({
     try {
       setIsLoadingStatus(true);
       const res = await fetch('/api/auto-publish/status');
-      if (res.ok) {
+      if (res.ok && isJsonResponse(res)) {
         const data = await res.json();
         setServerStatus(data);
       }

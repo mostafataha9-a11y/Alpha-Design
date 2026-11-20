@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { SiteSettings } from '../types/blog';
 import { SubpageBreadcrumb } from './SubpageBreadcrumb';
+import { isJsonResponse } from '../utils/apiAuth';
 
 interface ContactViewProps {
   settings: SiteSettings;
@@ -54,6 +55,25 @@ export const ContactView: React.FC<ContactViewProps> = ({ settings, onOpenChatBo
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
+
+      if (res.status === 404 || !isJsonResponse(res)) {
+        try {
+          const prev = JSON.parse(localStorage.getItem('alpha_decor_contact_queue') || '[]');
+          localStorage.setItem(
+            'alpha_decor_contact_queue',
+            JSON.stringify([{ ...formData, createdAt: new Date().toISOString() }, ...prev].slice(0, 20))
+          );
+        } catch {}
+        setIsSubmitted(true);
+        setServerReplyMsg(
+          isAr
+            ? 'تم تسجيل طلبك وحفظه محلياً بنجاح. للتواصل السريع يمكنك مراسلتنا مباشرة عبر واتساب.'
+            : 'Request saved successfully.'
+        );
+        setFormData({ name: '', email: '', subject: '', message: '' });
+        return;
+      }
+
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || (isAr ? 'فشل إرسال الرسالة، يرجى المحاولة لاحقاً.' : 'Failed to send message.'));

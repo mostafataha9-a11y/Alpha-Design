@@ -20,7 +20,19 @@ import { HadaryCoinFollowWidget } from './components/HadaryCoinFollowWidget';
 import { Article, SiteSettings, ActiveTab, Comment, BroadcastHistoryItem, AdminUser, PublicTab } from './types/blog';
 import { INITIAL_SETTINGS, INITIAL_ARTICLES, CATEGORIES } from './data/initialData';
 import { Bot, Lock, Shield, LogIn, Home, Share2, Newspaper, Check } from 'lucide-react';
-import { getAuthToken, clearAuthToken, fetchWithAuth } from './utils/apiAuth';
+import { getAuthToken, clearAuthToken, fetchWithAuth, isJsonResponse } from './utils/apiAuth';
+import {
+  fetchPublishedArticlesFromFirestore,
+  saveArticleToFirestore,
+  syncMultipleArticlesToFirestore,
+  deleteArticleFromFirestore,
+  likeArticleInFirestore,
+  addCommentToFirestore,
+  fetchPublicSettingsFromFirestore,
+  savePublicSettingsToFirestore,
+  clearOwnerGateProof,
+  getStoredOwnerGateProof,
+} from './services/firestoreSync';
 
 
 const STORAGE_KEY_SETTINGS = 'alpha_decor_settings_v3';
@@ -298,11 +310,9 @@ export default function App() {
     }
   };
 
-  // Initial load from Cloud SQL Database & verify session (with static Vite/Vercel localStorage fallback)
+  // Initial load from Express DB + Cloud Firestore (ensuring Vercel visitors see owner articles globally)
   useEffect(() => {
     let mounted = true;
-    const isJsonResponse = (res: Response) =>
-      (res.headers.get('content-type') || '').toLowerCase().includes('application/json');
 
     const loadStaticFallbackArticles = () => {
       try {
@@ -315,6 +325,33 @@ export default function App() {
         }
       } catch {}
       return INITIAL_ARTICLES;
+    };
+
+    const mergeArticleLists = (primary: Article[], secondary: Article[]): Article[] => {
+      const map = new Map<string, Article>();
+      for (const art of secondary) {
+        if (art?.id) map.set(art.id, art);
+      }
+      for (const art of primary) {
+        if (!art?.id) continue;
+        const existing = map.get(art.id);
+        if (existing) {
+          const mergedComments = [...(art.comments || []), ...(existing.comments || [])].filter(
+            (c, idx, arr) => c?.id && arr.findIndex((x) => x.id === c.id) === idx
+          );
+          map.set(art.id, {
+            ...existing,
+            ...art,
+            comments: mergedComments,
+            likes: Math.max(Number(art.likes) || 0, Number(existing.likes) || 0),
+          });
+        } else {
+          map.set(art.id, art);
+        }
+      }
+      return Array.from(map.values()).sort((a, b) =>
+        String(b.publishedAt || '').localeCompare(String(a.publishedAt || ''))
+      );
     };
 
     // 1. Verify session with backend when JSON backend exists
@@ -334,9 +371,35 @@ export default function App() {
         if (authResult.staticMode) {
           loggedIn = authResult.loggedIn;
           const fallbackList = loadStaticFallbackArticles();
-          setArticles(fallbackList);
-          resolveDeepLinkArticle(fallbackList);
+          let fsArticles: Article[] = [];
+          try {
+            fsArticles = await fetchPublishedArticlesFromFirestore();
+          } catch (fsErr) {
+            console.warn('Firestore articles fetch note:', fsErr);
+          }
+
+          if (!mounted) return;
+          const localDrafts = loggedIn ? fallbackList.filter((a) => a.status === 'draft') : [];
+          const basePublic = INITIAL_ARTICLES;
+          const merged = fsArticles.length > 0
+            ? mergeArticleLists([...fsArticles, ...localDrafts], basePublic)
+            : fallbackList;
+
+          setArticles(merged);
+          try {
+            localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(merged));
+          } catch {}
+          resolveDeepLinkArticle(merged);
           setIsArticlesLoading(false);
+
+          // If owner already holds valid write proof locally, sync any local-only published articles up to Firestore
+          if (loggedIn && getStoredOwnerGateProof()) {
+            const fsIds = new Set(fsArticles.map((a) => a.id));
+            const unsynced = fallbackList.filter((a) => a.status !== 'draft' && !fsIds.has(a.id));
+            if (unsynced.length > 0) {
+              syncMultipleArticlesToFirestore(unsynced).catch(() => {});
+            }
+          }
           return;
         }
 
@@ -349,51 +412,95 @@ export default function App() {
           clearAuthToken();
         }
 
-        // 2. Fetch articles from PostgreSQL (include drafts when logged in as admin)
+        // 2. Fetch articles from PostgreSQL (include drafts when logged in as admin) + Firestore merge
         const endpoint = loggedIn ? '/api/db/articles?status=all' : '/api/db/articles';
-        const res = await fetch(endpoint);
+        const [res, fsArticles] = await Promise.all([
+          fetch(endpoint).catch(() => null),
+          fetchPublishedArticlesFromFirestore().catch(() => [] as Article[]),
+        ]);
+
         if (!res || !res.ok || !isJsonResponse(res)) {
-          if (res && (res.status === 404 || !isJsonResponse(res))) {
-            const fallbackList = loadStaticFallbackArticles();
-            setArticles(fallbackList);
-            resolveDeepLinkArticle(fallbackList);
-            setIsArticlesLoading(false);
-            return;
-          }
-          throw new Error('فشل جلب المقالات من قاعدة البيانات PostgreSQL');
+          const fallbackList = loadStaticFallbackArticles();
+          const merged = fsArticles.length > 0
+            ? mergeArticleLists(fsArticles, fallbackList)
+            : fallbackList;
+          if (!mounted) return;
+          setArticles(merged);
+          resolveDeepLinkArticle(merged);
+          setIsArticlesLoading(false);
+          return;
         }
+
         const dbArticles = await res.json();
         if (!mounted) return;
         const normalizedList: Article[] = Array.isArray(dbArticles) ? dbArticles : [];
-        setArticles(normalizedList);
+        const mergedList = fsArticles.length > 0
+          ? mergeArticleLists(normalizedList, fsArticles)
+          : normalizedList;
+
+        setArticles(mergedList);
         try {
-          localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(normalizedList));
+          localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(mergedList));
         } catch {}
-        resolveDeepLinkArticle(normalizedList);
+        resolveDeepLinkArticle(mergedList);
         setIsArticlesLoading(false);
       })
-      .catch((err) => {
+      .catch(async (err) => {
         if (!mounted) return;
         console.warn('Database sync fallback active:', err);
         const fallbackList = loadStaticFallbackArticles();
+        try {
+          const fsArticles = await fetchPublishedArticlesFromFirestore();
+          if (mounted && fsArticles.length > 0) {
+            const merged = mergeArticleLists(fsArticles, INITIAL_ARTICLES);
+            setArticles(merged);
+            resolveDeepLinkArticle(merged);
+            setIsArticlesLoading(false);
+            return;
+          }
+        } catch {}
+        if (!mounted) return;
         setArticles(fallbackList);
         resolveDeepLinkArticle(fallbackList);
         setIsArticlesLoading(false);
       });
 
-    // 3. Fetch permanent settings from Cloud SQL when JSON backend exists
+    // 3. Fetch permanent settings from Cloud SQL or Cloud Firestore
     fetch('/api/db/settings')
       .then((res) => (res.ok && isJsonResponse(res) ? res.json() : null))
-      .then((dbSettings) => {
-        if (mounted && dbSettings && dbSettings.blogName) {
+      .then(async (dbSettings) => {
+        if (!mounted) return;
+        if (dbSettings && dbSettings.blogName) {
           setSettings((prev) => ({
             ...prev,
             ...dbSettings,
             authorName: 'الحضرى محمود',
           }));
+          return;
         }
+        try {
+          const fsSettings = await fetchPublicSettingsFromFirestore();
+          if (mounted && fsSettings && fsSettings.blogName) {
+            setSettings((prev) => ({
+              ...prev,
+              ...fsSettings,
+              authorName: 'الحضرى محمود',
+            }));
+          }
+        } catch {}
       })
-      .catch((err) => console.warn('Settings sync skipped in static mode:', err));
+      .catch(async () => {
+        try {
+          const fsSettings = await fetchPublicSettingsFromFirestore();
+          if (mounted && fsSettings && fsSettings.blogName) {
+            setSettings((prev) => ({
+              ...prev,
+              ...fsSettings,
+              authorName: 'الحضرى محمود',
+            }));
+          }
+        } catch {}
+      });
 
     return () => {
       mounted = false;
@@ -426,7 +533,7 @@ export default function App() {
     }
   }, [adminUser]);
 
-  // Periodically sync articles from Cloud SQL when backend JSON API is active
+  // Periodically sync articles from Cloud SQL or Cloud Firestore
   useEffect(() => {
     const syncArticlesFromDb = async () => {
       try {
@@ -434,15 +541,33 @@ export default function App() {
           ? '/api/db/articles?status=all'
           : '/api/db/articles';
         const res = await fetch(endpoint);
-        const contentType = (res.headers.get('content-type') || '').toLowerCase();
-        if (res.ok && contentType.includes('application/json')) {
+        if (res.ok && isJsonResponse(res)) {
           const dbArticles = await res.json();
-          if (Array.isArray(dbArticles)) {
+          if (Array.isArray(dbArticles) && dbArticles.length > 0) {
             setArticles(dbArticles);
             try {
               localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(dbArticles));
             } catch {}
+            return;
           }
+        }
+        // Static Vercel periodic sync from Cloud Firestore
+        const fsArticles = await fetchPublishedArticlesFromFirestore();
+        if (fsArticles.length > 0) {
+          setArticles((prev) => {
+            const draftOnly = adminUserRef.current?.isLoggedIn
+              ? prev.filter((a) => a.status === 'draft')
+              : [];
+            const fsIds = new Set(fsArticles.map((a) => a.id));
+            const baseSeed = INITIAL_ARTICLES.filter((a) => !fsIds.has(a.id));
+            const combined = [...draftOnly, ...fsArticles, ...baseSeed].sort((a, b) =>
+              String(b.publishedAt || '').localeCompare(String(a.publishedAt || ''))
+            );
+            try {
+              localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(combined));
+            } catch {}
+            return combined;
+          });
         }
       } catch (err) {
         console.warn('Silent sync note:', err);
@@ -459,9 +584,9 @@ export default function App() {
     navigateToTab('article-detail', article);
   };
 
-  // Publish or save draft article: strict PostgreSQL on Express, localStorage persistence on static Vite/Vercel hosting
+  // Publish or save draft article: strict PostgreSQL on Express + Cloud Firestore shared persistence on all hosts
   const handlePublishArticle = async (newArticle: Article) => {
-    const persistLocally = (articleToSave: Article) => {
+    const persistLocallyAndCloud = async (articleToSave: Article) => {
       const normalized: Article = {
         ...articleToSave,
         author: articleToSave.author || {
@@ -479,6 +604,13 @@ export default function App() {
         } catch {}
         return nextList;
       });
+      if (normalized.status !== 'draft') {
+        try {
+          await saveArticleToFirestore(normalized);
+        } catch (fsErr) {
+          console.warn('Firestore article publish sync warning:', fsErr);
+        }
+      }
       return { success: true, article: normalized };
     };
 
@@ -489,14 +621,13 @@ export default function App() {
         body: JSON.stringify(newArticle),
       });
     } catch {
-      // Static Vite/Vercel without Express backend
-      return persistLocally(newArticle);
+      // Static Vite/Vercel without Express backend -> save locally + Cloud Firestore
+      return await persistLocallyAndCloud(newArticle);
     }
 
-    const contentType = (res.headers.get('content-type') || '').toLowerCase();
-    if (res.status === 404 || !contentType.includes('application/json')) {
-      // Pure static hosting (e.g. Vercel SPA): persist directly to localStorage
-      return persistLocally(newArticle);
+    if (!res || res.status === 404 || !isJsonResponse(res)) {
+      // Pure static hosting (e.g. Vercel SPA): persist directly to Cloud Firestore + localStorage
+      return await persistLocallyAndCloud(newArticle);
     }
 
     let data: any = null;
@@ -515,10 +646,10 @@ export default function App() {
     }
 
     const rawArticle = data.article || newArticle;
-    return persistLocally(rawArticle);
+    return await persistLocallyAndCloud(rawArticle);
   };
 
-  // Delete an article (from backend manage articles & localStorage)
+  // Delete an article (from backend manage articles, Cloud Firestore & localStorage)
   const handleDeleteArticle = async (articleId: string) => {
     setArticles((prev) => {
       const nextList = prev.filter((a) => a.id !== articleId);
@@ -531,6 +662,9 @@ export default function App() {
       setSelectedArticle(null);
       setActiveTab('home');
     }
+    deleteArticleFromFirestore(articleId).catch((err) =>
+      console.warn('Firestore article delete warning:', err)
+    );
     try {
       const res = await fetchWithAuth(`/api/db/articles/${articleId}`, {
         method: 'DELETE',
@@ -539,49 +673,63 @@ export default function App() {
         console.warn('DELETE /api/db/articles failed with status:', res.status);
       }
     } catch (err) {
-      console.error('Failed to delete article from Cloud SQL:', err);
+      console.warn('Failed to delete article from server DB:', err);
     }
   };
 
-  // Add comment to an article
+  // Add comment to an article (persisted locally and to Firestore comments subcollection)
   const handleAddComment = (articleId: string, comment: Comment) => {
-    setArticles((prev) =>
-      prev.map((art) => {
+    setArticles((prev) => {
+      const nextList = prev.map((art) => {
         if (art.id === articleId) {
           return {
             ...art,
-            comments: [...art.comments, comment],
+            comments: [...(art.comments || []), comment],
           };
         }
         return art;
-      })
-    );
+      });
+      try {
+        localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(nextList));
+      } catch {}
+      return nextList;
+    });
 
     if (selectedArticle && selectedArticle.id === articleId) {
       setSelectedArticle({
         ...selectedArticle,
-        comments: [...selectedArticle.comments, comment],
+        comments: [...(selectedArticle.comments || []), comment],
       });
     }
+
+    addCommentToFirestore(articleId, comment).catch((err) =>
+      console.warn('Firestore comment sync note:', err)
+    );
   };
 
   // Like an article
   const handleLikeArticle = async (articleId: string) => {
-    setArticles((prev) =>
-      prev.map((art) => {
+    setArticles((prev) => {
+      const nextList = prev.map((art) => {
         if (art.id === articleId) {
-          return { ...art, likes: art.likes + 1 };
+          return { ...art, likes: (art.likes || 0) + 1 };
         }
         return art;
-      })
-    );
+      });
+      try {
+        localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(nextList));
+      } catch {}
+      return nextList;
+    });
 
     if (selectedArticle && selectedArticle.id === articleId) {
       setSelectedArticle({
         ...selectedArticle,
-        likes: selectedArticle.likes + 1,
+        likes: (selectedArticle.likes || 0) + 1,
       });
     }
+
+    likeArticleInFirestore(articleId).catch(() => {});
 
     try {
       await fetch(`/api/db/articles/${articleId}/like`, { method: 'POST' });
@@ -590,16 +738,19 @@ export default function App() {
     }
   };
 
-  // Update settings and persist to Cloud SQL
+  // Update settings and persist to Cloud SQL + Cloud Firestore
   const handleUpdateSettings = async (newSettings: SiteSettings) => {
     setSettings(newSettings);
+    savePublicSettingsToFirestore(newSettings).catch((err) =>
+      console.warn('Firestore settings sync warning:', err)
+    );
     try {
       await fetchWithAuth('/api/db/settings', {
         method: 'POST',
         body: JSON.stringify(newSettings),
       });
     } catch (err) {
-      console.error('Failed to persist settings to Cloud SQL:', err);
+      console.warn('Failed to persist settings to Cloud SQL:', err);
     }
   };
 
@@ -614,6 +765,10 @@ export default function App() {
   // Import articles
   const handleImportArticles = (importedArticles: Article[]) => {
     setArticles(importedArticles);
+    try {
+      localStorage.setItem(STORAGE_KEY_ARTICLES, JSON.stringify(importedArticles));
+    } catch {}
+    syncMultipleArticlesToFirestore(importedArticles).catch(() => {});
   };
 
   // Record social broadcast in settings history
@@ -632,14 +787,21 @@ export default function App() {
     setAdminUser(user);
     setIsAdminLoginOpen(false);
     setActiveTab('backend');
+    // Push any local-only published articles to Cloud Firestore so all visitors can view them
+    if (getStoredOwnerGateProof()) {
+      syncMultipleArticlesToFirestore(articlesRef.current).catch(() => {});
+      savePublicSettingsToFirestore(settings).catch(() => {});
+    }
     // Fetch all articles including drafts once authenticated as admin (when JSON backend exists)
     fetch('/api/db/articles?status=all')
-      .then((res) => {
-        const ct = (res.headers.get('content-type') || '').toLowerCase();
-        return res.ok && ct.includes('application/json') ? res.json() : null;
-      })
+      .then((res) => (res.ok && isJsonResponse(res) ? res.json() : null))
       .then((list) => {
-        if (Array.isArray(list)) setArticles(list);
+        if (Array.isArray(list)) {
+          setArticles(list);
+          if (getStoredOwnerGateProof()) {
+            syncMultipleArticlesToFirestore(list).catch(() => {});
+          }
+        }
       })
       .catch(() => {});
     try {
@@ -658,6 +820,7 @@ export default function App() {
       console.warn('Logout request failed:', err);
     }
     clearAuthToken();
+    clearOwnerGateProof();
     setAdminUser(null);
     navigateToTab('home');
   };
@@ -745,6 +908,8 @@ export default function App() {
             articles={publicArticles}
             settings={settings}
             categories={CATEGORIES}
+            selectedCategory={selectedCategory}
+            onSelectCategory={setSelectedCategory}
             onSelectArticle={handleSelectArticle}
             onOpenShareModal={(art) => setArticleForShareModal(art)}
             onNavigateHome={() => navigateToTab('home')}

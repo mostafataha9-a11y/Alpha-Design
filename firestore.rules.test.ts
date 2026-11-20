@@ -1,0 +1,133 @@
+/**
+ * Firestore Security Rules TDD Specification (Dirty Dozen Adversarial Suite)
+ * Run against Firebase Emulator Suite (@firebase/rules-unit-testing) when testing locally.
+ * Documents the 12 mandatory PERMISSION_DENIED invariants enforced by firestore.rules.
+ */
+
+export const DIRTY_DOZEN_CASES = [
+  {
+    id: 1,
+    name: 'Shadow Field Injection on Article Create',
+    path: 'articles/test-shadow',
+    operation: 'create',
+    payload: {
+      id: 'test-shadow',
+      title: 'مقال تجريبي',
+      slug: 'test-shadow',
+      excerpt: 'ملخص',
+      content: 'محتوى المقال',
+      featuredImage: 'https://example.com/a.jpg',
+      author: { name: 'الحضرى محمود', avatar: '', role: 'استشاري' },
+      category: 'الدهانات',
+      tags: ['دهان'],
+      publishedAt: '2026-01-01',
+      readingTime: 3,
+      views: 0,
+      likes: 0,
+      status: 'published',
+      isAdminVerified: true, // Ghost field
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 2,
+    name: 'Forged Owner Proof in adminSessions/gate',
+    path: 'adminSessions/gate',
+    operation: 'create',
+    payload: {
+      proof: '0'.repeat(64),
+      ts: 'SERVER_TIMESTAMP',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 3,
+    name: 'Attempted Read of adminSessions/gate',
+    path: 'adminSessions/gate',
+    operation: 'get',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 4,
+    name: 'Timestamp Replay Attack on adminSessions/gate',
+    path: 'adminSessions/gate',
+    operation: 'update',
+    payload: {
+      proof: '<secret-preimage>',
+      ts: new Date('2025-01-01T00:00:00Z'),
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 5,
+    name: 'Unfiltered List Query on articles (Draft Exposure Guard)',
+    path: 'articles',
+    operation: 'list',
+    where: null,
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 6,
+    name: 'Document ID Poisoning (>128 chars or invalid chars)',
+    path: `articles/${'x'.repeat(160)}`,
+    operation: 'create',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 7,
+    name: 'Visitor Modification of Article Title Without Owner Gate',
+    path: 'articles/pub-1',
+    operation: 'update',
+    payload: { title: 'Hacked Title' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 8,
+    name: 'Like Count Inflation Attack (+500 instead of +1)',
+    path: 'articles/pub-1',
+    operation: 'update',
+    payload: { likes: 500, updatedAt: 'SERVER_TIMESTAMP' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 9,
+    name: 'Type Poisoning on Like Update (String instead of Int/Number)',
+    path: 'articles/pub-1',
+    operation: 'update',
+    payload: { likes: '999', updatedAt: 'SERVER_TIMESTAMP' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 10,
+    name: 'Orphan or Draft Comment Injection',
+    path: 'articles/missing-or-draft-article/comments/c-1',
+    operation: 'create',
+    payload: {
+      id: 'c-1',
+      articleId: 'missing-or-draft-article',
+      author: 'Visitor',
+      avatar: '',
+      content: 'Spam comment',
+      createdAtDisplay: '2026-01-01',
+      createdAt: 'SERVER_TIMESTAMP',
+      likes: 0,
+      isPublic: true,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 11,
+    name: 'Unauthorized Comment Modification / Deletion',
+    path: 'articles/pub-1/comments/c-1',
+    operation: 'delete',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 12,
+    name: 'Arbitrary Document ID / Unauthenticated Write to siteSettings',
+    path: 'siteSettings/privateSecrets',
+    operation: 'create',
+    payload: { blogName: 'Hijacked' },
+    expected: 'PERMISSION_DENIED',
+  },
+];
