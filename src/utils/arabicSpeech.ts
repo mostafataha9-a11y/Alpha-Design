@@ -181,35 +181,30 @@ export function splitSpeechTextIntoChunks(rawText: string, maxWords = 28): strin
 export function createArticleSpeechChunks(
   article: Article,
   mode: 'full' | 'summary' = 'full',
-  ownerName = 'الحضرى محمود'
+  _ownerName = 'الحضرى محمود'
 ): string[] {
   const chunks: string[] = [];
 
   const cleanTitle = prepareArabicSpeechText(article.title || '');
-  const cleanAuthor = prepareArabicSpeechText(article.author?.name || ownerName);
-  chunks.push(
-    `أهلاً بك في مدونة ألفا للديكور والدهانات. نبدأ قراءة مقال: ${cleanTitle}، بقلم كاتب المقال المهندس ${cleanAuthor}.`
-  );
+  if (cleanTitle) {
+    chunks.push(cleanTitle);
+  }
 
   if (article.excerpt) {
-    chunks.push(`الملخص: ${prepareArabicSpeechText(article.excerpt)}`);
+    const cleanExcerpt = prepareArabicSpeechText(article.excerpt);
+    if (cleanExcerpt) {
+      chunks.push(cleanExcerpt);
+    }
   }
 
   if (mode === 'summary') {
-    chunks.push(
-      `هذا المقال ضمن تصنيف ${prepareArabicSpeechText(article.category || 'الديكور')}، ووقت قراءته نحو ${article.readingTime || 5} دقائق.`
-    );
     return chunks;
   }
 
   const bodyChunks = splitSpeechTextIntoChunks(article.content || '', 30);
   chunks.push(...bodyChunks);
 
-  chunks.push(
-    `تمت قراءة المقال بالكامل. يسعدنا تواصلك مع المهندس ${cleanAuthor} لحجز استشارة أو معاينة لمشروعك.`
-  );
-
-  return chunks;
+  return chunks.filter(Boolean);
 }
 
 export interface ArabicSpeechCallbacks {

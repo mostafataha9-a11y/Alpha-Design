@@ -277,20 +277,19 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
     };
   }, [playTone, getSpeechController]);
 
-  // Welcome announcement on initial open (skipped when opened directly via autoReadArticle)
+  // Silent readiness hint on initial open — voice host waits quietly until the user speaks or requests an action
   useEffect(() => {
     if (isOpen && dialogueHistory.length === 0 && !hasAutoStartedRef.current) {
-      const welcomeText = `مرحباً بك يا ضيفنا العزيز في مدونة ألفا للديكور والدهانات. أنا قارئ المقالات الذكي ومضيفك الصوتي المتحدث باسم المهندس «${ownerName}». أنا جاهز لقراءة المقالات بصوت عربي واضح، أو وصف الألوان والديكورات، أو ترشيح أفضل الحلول لمنزلك.`;
+      const readyHint = `جاهز لتنفيذ طلبك الآن. قل «اقرأ المقال»، أو «صف الألوان»، أو «رشح مقال»، أو اطرح سؤالك وسأرد عليك فوراً.`;
       const welcome: DialogueMessage = {
         id: 'msg-welcome',
         sender: 'assistant',
-        text: welcomeText,
+        text: readyHint,
         timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
       };
       setDialogueHistory([welcome]);
-      startStreamingSingleText(welcomeText);
     }
-  }, [isOpen, ownerName, dialogueHistory.length]);
+  }, [isOpen, dialogueHistory.length]);
 
   // Auto scroll to latest dialogue message or loading indicator
   useEffect(() => {
@@ -434,9 +433,8 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
       };
       setDialogueHistory((prev) => [...prev, logMsg]);
 
-      // Speak immediately in chunks!
+      // Speak description directly without unnecessary intro
       const chunks = [
-        `أهلاً بك يا ضيفنا العزيز. أصف لك الآن روعة الألوان وتوزيع الإضاءة في مقال: «${target.title}».`,
         preCrafted.desc,
         `نصيحة المهندس ${ownerName}: ${preCrafted.tip}`,
       ];

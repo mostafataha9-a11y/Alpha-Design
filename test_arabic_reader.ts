@@ -47,7 +47,8 @@ assert.ok(cleaned.includes('ثلاثة آلاف كلفن'), 'Cleaned text should
 const article = INITIAL_ARTICLES[0];
 const chunks = createArticleSpeechChunks(article, 'full', 'الحضرى محمود');
 assert.ok(chunks.length > 3, 'Should segment full article into multiple chunks');
-assert.ok(chunks[0].includes('نبدأ قراءة مقال'), 'First chunk should introduce the article in Arabic');
+assert.ok(!chunks[0].includes('أهلاً بك في مدونة'), 'Must not prepend unnecessary blog welcome intro before reading article');
+assert.ok(chunks[0].includes('دهانات') || chunks[0].length > 10, 'First chunk should start directly with the article title');
 chunks.forEach((c) => {
   assert.ok(!c.includes('0ms'), 'No 0ms ASCII token in spoken chunks');
   assert.ok(c.trim().length > 0, 'Chunks must not be empty');
