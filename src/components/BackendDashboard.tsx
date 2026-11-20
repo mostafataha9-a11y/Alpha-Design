@@ -541,6 +541,12 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
                         <img
                           src={art.featuredImage}
                           alt={art.title}
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            if (!target.src.includes('photo-1618221195710')) {
+                              target.src = 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80';
+                            }
+                          }}
                           className="w-12 h-12 rounded-xl object-cover shrink-0"
                         />
                         <div className="min-w-0">
@@ -651,6 +657,12 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
                           <img
                             src={art.featuredImage}
                             alt={art.title}
+                            onError={(e) => {
+                              const target = e.currentTarget;
+                              if (!target.src.includes('photo-1618221195710')) {
+                                target.src = 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80';
+                              }
+                            }}
                             className="w-10 h-10 rounded-lg object-cover shrink-0"
                           />
                           <div className="min-w-0 max-w-xs">
@@ -731,6 +743,12 @@ export const BackendDashboard: React.FC<BackendDashboardProps> = ({
                     <img
                       src={art.featuredImage}
                       alt={art.title}
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (!target.src.includes('photo-1618221195710')) {
+                          target.src = 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80';
+                        }
+                      }}
                       className="w-14 h-14 rounded-xl object-cover shrink-0"
                     />
                     <div className="min-w-0 flex-1">

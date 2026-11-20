@@ -108,11 +108,12 @@ export const ArticlesView: React.FC<ArticlesViewProps> = ({
   // Strict pagination from settings (between 3 and 10)
   const pageSize = Math.max(3, Math.min(10, settings.articlesPerPage || 6));
   const totalPages = Math.ceil(filteredArticles.length / pageSize) || 1;
+  const validCurrentPage = Math.min(currentPage, totalPages);
 
   const paginatedArticles = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
+    const start = (validCurrentPage - 1) * pageSize;
     return filteredArticles.slice(start, start + pageSize);
-  }, [filteredArticles, currentPage, pageSize]);
+  }, [filteredArticles, validCurrentPage, pageSize]);
 
   const handlePageChange = (newPage: number) => {
     if (newPage >= 1 && newPage <= totalPages) {
@@ -439,8 +440,8 @@ export const ArticlesView: React.FC<ArticlesViewProps> = ({
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2 pt-6">
           <button
-            onClick={() => handlePageChange(currentPage - 1)}
-            disabled={currentPage === 1}
+            onClick={() => handlePageChange(validCurrentPage - 1)}
+            disabled={validCurrentPage === 1}
             className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
           >
             {isAr ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -451,7 +452,7 @@ export const ArticlesView: React.FC<ArticlesViewProps> = ({
               key={pageNum}
               onClick={() => handlePageChange(pageNum)}
               className={`w-9 h-9 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                currentPage === pageNum
+                validCurrentPage === pageNum
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/25'
                   : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
               }`}
@@ -461,8 +462,8 @@ export const ArticlesView: React.FC<ArticlesViewProps> = ({
           ))}
 
           <button
-            onClick={() => handlePageChange(currentPage + 1)}
-            disabled={currentPage === totalPages}
+            onClick={() => handlePageChange(validCurrentPage + 1)}
+            disabled={validCurrentPage === totalPages}
             className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 disabled:opacity-30 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
           >
             {isAr ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}

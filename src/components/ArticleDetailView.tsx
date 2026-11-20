@@ -26,7 +26,9 @@ import {
   MapPin,
   ExternalLink,
   Home,
-  CheckCircle2
+  CheckCircle2,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { Article, Comment, SiteSettings, BroadcastHistoryItem } from '../types/blog';
 import { AuthorBadge } from './AuthorBadge';
@@ -36,12 +38,17 @@ import { HadaryCoinFollowWidget } from './HadaryCoinFollowWidget';
 import { parseInlineDecorText } from './InteractiveArticleRenderer';
 import { SubpageBreadcrumb } from './SubpageBreadcrumb';
 import { isJsonResponse } from '../utils/apiAuth';
+import {
+  ArabicSpeechController,
+  createArticleSpeechChunks,
+} from '../utils/arabicSpeech';
 
 
 interface ArticleDetailViewProps {
   article: Article;
   settings: SiteSettings;
   onBack: () => void;
+  onNavigateArticles?: () => void;
   onSelectArticle: (article: Article) => void;
   allArticles: Article[];
   onAddComment: (articleId: string, comment: Comment) => void;
@@ -49,10 +56,13 @@ interface ArticleDetailViewProps {
   onBroadcastComplete?: (item: BroadcastHistoryItem) => void;
 }
 
+const LIKED_ARTICLES_STORAGE_KEY = 'alpha_decor_liked_article_ids_v1';
+
 export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
   article,
   settings,
   onBack,
+  onNavigateArticles,
   onSelectArticle,
   allArticles,
   onAddComment,
@@ -64,18 +74,42 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
 
   const [copied, setCopied] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
   const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
   const [realViews, setRealViews] = useState<number>(article?.views || 0);
+  const speechControllerRef = React.useRef<ArabicSpeechController | null>(null);
 
   // New comment form
   const [commentAuthor, setCommentAuthor] = useState('');
   const [commentContent, setCommentContent] = useState('');
-  const [hasLiked, setHasLiked] = useState(false);
+  const [hasLiked, setHasLiked] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LIKED_ARTICLES_STORAGE_KEY) || '[]');
+      return Array.isArray(saved) && saved.includes(article?.id);
+    } catch {
+      return false;
+    }
+  });
   const [commentSuccess, setCommentSuccess] = useState(false);
 
-  // Track real article view in database upon visit
+  // Reset liked check, stop ongoing article speech, and track real view on article change
   useEffect(() => {
     setRealViews(article?.views || 0);
+    setAudioError(null);
+    if (speechControllerRef.current) {
+      speechControllerRef.current.stop();
+    }
+    setIsPlayingAudio(false);
+    setIsLoadingAudio(false);
+
+    try {
+      const saved = JSON.parse(localStorage.getItem(LIKED_ARTICLES_STORAGE_KEY) || '[]');
+      setHasLiked(Array.isArray(saved) && Boolean(article?.id) && saved.includes(article.id));
+    } catch {
+      setHasLiked(false);
+    }
+
     if (!article?.id) return;
     fetch(`/api/db/articles/${article.id}/view`, { method: 'POST' })
       .then((res) => (res.ok && isJsonResponse(res) ? res.json() : null))
@@ -85,6 +119,10 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
         }
       })
       .catch(() => {});
+
+    return () => {
+      speechControllerRef.current?.stop();
+    };
   }, [article?.id]);
 
   if (!article) {
@@ -107,33 +145,51 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Text-To-Speech reader
+  // Pure Arabic Text-To-Speech reader (Gemini Arabic TTS + strict Arabic browser voice fallback)
   const handleToggleSpeech = () => {
-    if (!('speechSynthesis' in window)) {
-      console.warn('Speech synthesis not supported in this environment');
-      return;
+    setAudioError(null);
+    if (!speechControllerRef.current) {
+      speechControllerRef.current = new ArabicSpeechController({
+        onStateChange: (st) => {
+          setIsPlayingAudio(st.isSpeaking);
+          setIsLoadingAudio(st.isLoadingAudio);
+        },
+        onError: (msg) => {
+          setAudioError(msg);
+          setIsPlayingAudio(false);
+          setIsLoadingAudio(false);
+        },
+        onComplete: () => {
+          setIsPlayingAudio(false);
+          setIsLoadingAudio(false);
+        },
+      });
     }
 
     if (isPlayingAudio) {
-      window.speechSynthesis.cancel();
+      speechControllerRef.current.stop();
       setIsPlayingAudio(false);
-    } else {
-      window.speechSynthesis.cancel();
-      const plainText = article.title + '. ' + article.excerpt + '. ' + article.content.replace(/[#*`!\[\]\(\)]/g, ' ');
-      const utterance = new SpeechSynthesisUtterance(plainText);
-      utterance.lang = isAr ? 'ar-SA' : 'en-US';
-      utterance.rate = 1.0;
-      utterance.onend = () => setIsPlayingAudio(false);
-      utterance.onerror = () => setIsPlayingAudio(false);
-      window.speechSynthesis.speak(utterance);
-      setIsPlayingAudio(true);
+      setIsLoadingAudio(false);
+      return;
     }
+
+    const chunks = createArticleSpeechChunks(
+      article,
+      'full',
+      article?.author?.name || settings.authorName || 'الحضرى محمود'
+    );
+    speechControllerRef.current.playChunks(chunks);
   };
 
   const handleLike = () => {
     if (!hasLiked) {
       onLikeArticle(article.id);
       setHasLiked(true);
+      try {
+        const saved = JSON.parse(localStorage.getItem(LIKED_ARTICLES_STORAGE_KEY) || '[]');
+        const next = Array.isArray(saved) ? Array.from(new Set([...saved, article.id])) : [article.id];
+        localStorage.setItem(LIKED_ARTICLES_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
     }
   };
 
@@ -308,45 +364,90 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
         currentPageTitle={article.title}
         categoryTitle={article.category}
         onNavigateHome={onBack}
-        onNavigateArticles={onBack}
+        onNavigateArticles={onNavigateArticles || onBack}
       />
 
       {/* 2. Top Navigation Bar with Return to Homepage & Quick Tools */}
-      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 p-2.5 sm:p-3.5 rounded-2xl bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
-        >
-          <Home className="w-4 h-4" />
-          <span>{isAr ? 'العودة للصفحة الرئيسية' : 'Back to Home'}</span>
-        </button>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {/* TTS Screen Reader for the Blind Button */}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 p-2.5 sm:p-3.5 rounded-2xl bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <button
-            onClick={() => window.dispatchEvent(new CustomEvent('open-blind-screen-reader'))}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-400/50 hover:bg-amber-500/25 transition-all cursor-pointer shadow-xs"
-            title={isAr ? 'قارئ الشاشة للمكفوفين مع وصف الصور والألوان' : 'Blind Screen Reader & Visuals'}
+            type="button"
+            onClick={onBack}
+            className="flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
           >
-            <Volume2 className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-pulse" />
-            <span>{isAr ? 'قارئ المكفوفين ووصف الصور' : 'Blind Reader & Visuals'}</span>
+            <Home className="w-4 h-4" />
+            <span>{isAr ? 'العودة للصفحة الرئيسية' : 'Back to Home'}</span>
           </button>
 
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Direct Article Audio Player Button */}
+            <button
+              type="button"
+              onClick={handleToggleSpeech}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-xs ${
+                isPlayingAudio
+                  ? 'bg-rose-600 text-white border-rose-500 hover:bg-rose-500'
+                  : 'bg-blue-600/10 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700 hover:bg-blue-600/20'
+              }`}
+              title={isAr ? 'استمع لقراءة المقال باللغة العربية' : 'Listen to Arabic article audio'}
+            >
+              {isLoadingAudio ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : isPlayingAudio ? (
+                <VolumeX className="w-4 h-4" />
+              ) : (
+                <Volume2 className="w-4 h-4" />
+              )}
+              <span>
+                {isLoadingAudio
+                  ? (isAr ? 'جاري تجهيز الصوت...' : 'Loading voice...')
+                  : isPlayingAudio
+                  ? (isAr ? 'إيقاف الاستماع' : 'Stop Listening')
+                  : (isAr ? 'استمع للمقال' : 'Listen to Article')}
+              </span>
+            </button>
 
-          {/* Like Button */}
-          <button
-            onClick={handleLike}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
-              hasLiked
-                ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 border border-rose-200'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-rose-500'
-            }`}
-          >
-            <Heart className={`w-4 h-4 ${hasLiked ? 'fill-rose-500 text-rose-500' : ''}`} />
-            <span>{article.likes + (hasLiked ? 1 : 0)}</span>
-          </button>
+            {/* TTS Screen Reader for the Blind Button (opens & auto-reads current article in Arabic) */}
+            <button
+              type="button"
+              onClick={() => {
+                speechControllerRef.current?.stop();
+                setIsPlayingAudio(false);
+                window.dispatchEvent(
+                  new CustomEvent('open-blind-screen-reader', {
+                    detail: { autoReadArticle: true, article },
+                  })
+                );
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-400/50 hover:bg-amber-500/25 transition-all cursor-pointer shadow-xs"
+              title={isAr ? 'قارئ الشاشة للمكفوفين مع وصف الصور والألوان' : 'Blind Screen Reader & Visuals'}
+            >
+              <Volume2 className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-pulse" />
+              <span>{isAr ? 'قارئ المكفوفين ووصف الصور' : 'Blind Reader & Visuals'}</span>
+            </button>
+
+            {/* Like Button */}
+            <button
+              type="button"
+              onClick={handleLike}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                hasLiked
+                  ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 border border-rose-200'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-rose-500'
+              }`}
+            >
+              <Heart className={`w-4 h-4 ${hasLiked ? 'fill-rose-500 text-rose-500' : ''}`} />
+              <span>{article.likes || 0}</span>
+            </button>
+          </div>
         </div>
+
+        {audioError && (
+          <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-medium flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{audioError}</span>
+          </div>
+        )}
       </div>
 
       {/* Article Header */}
@@ -724,6 +825,13 @@ export const ArticleDetailView: React.FC<ArticleDetailViewProps> = ({
                   <img
                     src={rel.featuredImage}
                     alt={rel.title}
+                    loading="lazy"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (!target.src.includes('photo-1618221195710')) {
+                        target.src = 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80';
+                      }
+                    }}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                   />
                 </div>

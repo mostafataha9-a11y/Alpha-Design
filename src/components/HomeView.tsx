@@ -67,7 +67,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   const handleQuickShare = (art: Article, e: React.MouseEvent) => {
     e.stopPropagation();
-    const url = `${window.location.origin}/#article-${art.slug}`;
+    const url = `${window.location.origin}/#article-${encodeURIComponent(art.slug || art.id)}`;
     if (navigator.share) {
       navigator.share({
         title: art.title,
@@ -154,7 +154,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
     return safeArticles
       .filter((a) => {
         if (!a) return false;
-        const catMatch = a.category === 'أخبار الديكور والدهانات';
+        const catMatch =
+          a.category === 'أحدث الأخبار والمستجدات' || a.category === 'أخبار الديكور والدهانات';
         const idMatch = typeof a.id === 'string' && a.id.startsWith('post-news-');
         const tagsMatch =
           Array.isArray(a.tags) &&
@@ -313,6 +314,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <img
                   src={heroArticle.featuredImage}
                   alt={heroArticle.title}
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.src.includes('photo-1618221195710')) {
+                      target.src = 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80';
+                    }
+                  }}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                 />
                 <span className="absolute top-3 start-3 px-2.5 py-1 rounded-md bg-blue-600/90 text-white text-xs font-bold backdrop-blur-xs">
@@ -387,7 +394,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setSelectedCategory('أخبار الديكور والدهانات');
+                  setSelectedCategory('أحدث الأخبار والمستجدات');
                   setActiveTab('articles');
                 }}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold border border-white/15 transition-all hover:scale-105 cursor-pointer backdrop-blur-xs"
@@ -413,6 +420,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       src={news.featuredImage}
                       alt={news.title}
                       loading="lazy"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (!target.src.includes('photo-1618221195710')) {
+                          target.src = 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80';
+                        }
+                      }}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     />
                     <span className="absolute top-2 start-2 px-2 py-0.5 rounded-md bg-rose-600/90 text-white text-[10px] font-black tracking-wide shadow-xs">
@@ -591,6 +604,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       src={article.featuredImage}
                       alt={article.title}
                       loading="lazy"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (!target.src.includes('photo-1618221195710')) {
+                          target.src = 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80';
+                        }
+                      }}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     />
                     <div className="absolute top-3 start-3 flex items-center gap-1.5">
@@ -925,6 +944,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     <img
                       src={art.featuredImage}
                       alt={art.title}
+                      loading="lazy"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (!target.src.includes('photo-1618221195710')) {
+                          target.src = 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80';
+                        }
+                      }}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                     />
                   </div>

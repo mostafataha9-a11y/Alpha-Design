@@ -66,7 +66,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-4">
             <span className="hidden sm:inline-flex items-center gap-1.5 text-slate-400">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              {isAr ? 'مدونة التصميم والتقنية الذكية' : 'Creative Design & AI Technology Hub'}
+              {isAr ? 'مدونة الفا للديكور والدهانات الحديثة' : 'Alpha Decor & Modern Paints Hub'}
             </span>
             <span className="text-slate-400 border-s border-slate-700 ps-3 hidden md:inline">
               {new Date().toLocaleDateString(isAr ? 'ar-EG' : 'en-US', {

@@ -208,7 +208,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ settings, onOpenChatBo
                   type="text"
                   value={formData.subject}
                   onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                  placeholder={isAr ? 'مثال: اقتراح مقال أو استفسار تصميمي' : 'Subject of your message'}
+                  placeholder={isAr ? 'مثال: استفسار عن دهانات الحوائط أو معاينة شقة' : 'Subject of your message'}
                   className="w-full text-xs sm:text-sm px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                 />
               </div>
@@ -334,8 +334,8 @@ export const ContactView: React.FC<ContactViewProps> = ({ settings, onOpenChatBo
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-300">
                   {isAr
-                    ? 'هل لديك مشروع تصميم أو برمجة وتريد معرفة التكلفة والتفاوض فوراً؟ سيتفاوض معك المساعد ويحولك لصاحب المدونة عند الاتفاق!'
-                    : 'Need design or dev work? Negotiate prices with our AI assistant and get instantly connected!'}
+                    ? 'هل لديك شقة أو فيلا تحت التشطيب وتريد حساب تكلفة الدهانات والديكورات والتفاوض فوراً؟ سيتفاوض معك المساعد ويحولك لصاحب المدونة عند الاتفاق!'
+                    : 'Need painting or interior decor finishing? Negotiate prices with our AI assistant and get instantly connected!'}
                 </p>
                 {onOpenChatBot && (
                   <button

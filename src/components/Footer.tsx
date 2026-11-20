@@ -53,7 +53,18 @@ export const Footer: React.FC<FooterProps> = ({
 
   const handleNewsletterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newsletterEmail.trim() || newsletterLoading) return;
+    const cleanEmail = newsletterEmail.trim();
+    if (!cleanEmail || newsletterLoading) return;
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    if (!emailRegex.test(cleanEmail)) {
+      setNewsletterError(
+        isAr
+          ? 'صيغة البريد الإلكتروني غير صالحة. يرجى كتابة بريد صحيح مثل name@example.com.'
+          : 'Invalid email format. Please enter a valid email address.'
+      );
+      return;
+    }
 
     setNewsletterLoading(true);
     setNewsletterError('');
@@ -310,8 +321,8 @@ export const Footer: React.FC<FooterProps> = ({
             </h4>
             <p className="text-xs text-slate-400 leading-relaxed">
               {isAr
-                ? 'اشترك ليصلك ملخص مقالات التصميم والذكاء الاصطناعي أسبوعياً.'
-                : 'Get weekly design insights and AI trends delivered to your inbox.'}
+                ? 'اشترك ليصلك ملخص أحدث مقالات الدهانات والديكورات العصرية أسبوعياً.'
+                : 'Get weekly interior decor & modern painting insights delivered to your inbox.'}
             </p>
 
             {newsletterSuccess ? (

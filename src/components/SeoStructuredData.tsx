@@ -73,7 +73,7 @@ export const SeoStructuredData: React.FC<SeoStructuredDataProps> = ({
         document.head.appendChild(articleScript);
       }
 
-      const canonicalUrl = `${window.location.origin}/#${encodeURIComponent(article.slug)}`;
+      const canonicalUrl = `${window.location.origin}/#article-${encodeURIComponent(article.slug || article.id)}`;
       const articleData = {
         '@context': 'https://schema.org',
         '@type': 'BlogPosting',

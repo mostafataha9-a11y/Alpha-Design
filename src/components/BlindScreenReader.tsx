@@ -18,7 +18,7 @@ import {
   Loader2,
   SkipForward,
   SkipBack,
-  FastForward
+  AlertCircle
 } from 'lucide-react';
 import { Article, SiteSettings, ActiveTab } from '../types/blog';
 import {
@@ -27,6 +27,13 @@ import {
   isGeminiKeyError,
   formatGeminiArabicError,
 } from '../services/geminiClient';
+import {
+  ArabicSpeechController,
+  ActiveSpeechEngine,
+  createArticleSpeechChunks,
+  splitSpeechTextIntoChunks,
+  prepareArabicSpeechText,
+} from '../utils/arabicSpeech';
 
 // Web Speech API interface definitions for TypeScript
 interface IWindow extends Window {
@@ -103,6 +110,9 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [activeEngine, setActiveEngine] = useState<ActiveSpeechEngine>('gemini');
+  const [speechNotice, setSpeechNotice] = useState<string | null>(null);
   const [readingSpeed, setReadingSpeed] = useState<number>(1.0);
   const [currentReadingText, setCurrentReadingText] = useState<string>('');
   const [activeSentenceIndex, setActiveSentenceIndex] = useState<number>(-1);
@@ -110,27 +120,50 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
   const [dialogueHistory, setDialogueHistory] = useState<DialogueMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoadingAi, setIsLoadingAi] = useState(false);
-  const [speechSupported, setSpeechSupported] = useState(true);
   const [voiceRecSupported, setVoiceRecSupported] = useState(true);
-  const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
-  // Streaming Queue References
-  const queueRef = useRef<string[]>([]);
-  const queueIndexRef = useRef<number>(0);
-  const isQueueActiveRef = useRef<boolean>(false);
-  const speedRef = useRef<number>(1.0);
-
+  const speechControllerRef = useRef<ArabicSpeechController | null>(null);
+  const hasAutoStartedRef = useRef<boolean>(false);
   const recognitionRef = useRef<any>(null);
-  const synthRef = useRef<SpeechSynthesis | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const ownerName = settings.authorName || 'الحضرى محمود';
 
-  // Keep speedRef in sync
+  const getSpeechController = useCallback(() => {
+    if (!speechControllerRef.current) {
+      speechControllerRef.current = new ArabicSpeechController({
+        onStartChunk: (index, chunkText, total) => {
+          setActiveSentenceIndex(index);
+          setCurrentReadingText(chunkText);
+          setTotalChunksCount(total);
+          setSpeechNotice(null);
+        },
+        onStateChange: (state) => {
+          setIsSpeaking(state.isSpeaking);
+          setIsPaused(state.isPaused);
+          setIsLoadingAudio(state.isLoadingAudio);
+          setActiveEngine(state.engine);
+        },
+        onError: (arabicMessage) => {
+          setSpeechNotice(arabicMessage);
+        },
+        onComplete: () => {
+          setIsSpeaking(false);
+          setIsPaused(false);
+          setIsLoadingAudio(false);
+          setActiveSentenceIndex(-1);
+          setCurrentReadingText('');
+        },
+      });
+    }
+    return speechControllerRef.current;
+  }, []);
+
+  // Keep reading speed synced live
   useEffect(() => {
-    speedRef.current = readingSpeed;
-  }, [readingSpeed]);
+    getSpeechController().setSpeed(readingSpeed);
+  }, [readingSpeed, getSpeechController]);
 
   // Play fast Web Audio API sound cues (chimes) with zero network latency
   const playTone = useCallback((type: 'start' | 'stop' | 'chime' | 'navigate') => {
@@ -181,26 +214,19 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
     }
   }, []);
 
-  // Initialize Speech Synthesis & Voice Recognition
+  // Initialize Speech Controller & Arabic Voice Recognition
   useEffect(() => {
+    const controller = getSpeechController();
+
     if (typeof window !== 'undefined') {
       if ('speechSynthesis' in window) {
-        synthRef.current = window.speechSynthesis;
-        const loadVoices = () => {
+        const triggerVoicesRefresh = () => {
           try {
-            const voices = window.speechSynthesis.getVoices();
-            const arVoice = voices.find((v) => v.lang.startsWith('ar') || v.lang.includes('Arabic'));
-            if (arVoice) {
-              selectedVoiceRef.current = arVoice;
-            }
-          } catch {
-            // voices error fallback
-          }
+            window.speechSynthesis.getVoices();
+          } catch {}
         };
-        loadVoices();
-        window.speechSynthesis.onvoiceschanged = loadVoices;
-      } else {
-        setSpeechSupported(false);
+        triggerVoicesRefresh();
+        window.speechSynthesis.onvoiceschanged = triggerVoicesRefresh;
       }
 
       const win = window as IWindow;
@@ -238,16 +264,115 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
     }
 
     return () => {
-      if (synthRef.current) {
-        synthRef.current.cancel();
-      }
+      controller.stop();
       if (recognitionRef.current) {
-        recognitionRef.current.abort();
+        try {
+          recognitionRef.current.abort();
+        } catch {}
       }
     };
-  }, [playTone]);
+  }, [playTone, getSpeechController]);
 
-  // Global Keyboard Shortcuts (Alt + S / Alt + R) & Custom Event
+  // Welcome announcement on initial open (skipped when opened directly via autoReadArticle)
+  useEffect(() => {
+    if (isOpen && dialogueHistory.length === 0 && !hasAutoStartedRef.current) {
+      const welcomeText = `مرحباً بك يا ضيفنا العزيز في مدونة ألفا للديكور والدهانات. أنا قارئ المقالات الذكي ومضيفك الصوتي المتحدث باسم المهندس «${ownerName}». أنا جاهز لقراءة المقالات بصوت عربي واضح، أو وصف الألوان والديكورات، أو ترشيح أفضل الحلول لمنزلك.`;
+      const welcome: DialogueMessage = {
+        id: 'msg-welcome',
+        sender: 'assistant',
+        text: welcomeText,
+        timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      };
+      setDialogueHistory([welcome]);
+      startStreamingSingleText(welcomeText);
+    }
+  }, [isOpen, ownerName, dialogueHistory.length]);
+
+  // Auto scroll to latest dialogue message
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [dialogueHistory]);
+
+  // Stop Speech Synthesis immediately
+  const stopSpeaking = useCallback(() => {
+    getSpeechController().stop();
+    setIsSpeaking(false);
+    setIsPaused(false);
+    setIsLoadingAudio(false);
+    setActiveSentenceIndex(-1);
+    setCurrentReadingText('');
+  }, [getSpeechController]);
+
+  // Pause Speech
+  const pauseSpeaking = () => {
+    getSpeechController().pause();
+  };
+
+  // Resume Speech
+  const resumeSpeaking = () => {
+    getSpeechController().resume();
+  };
+
+  // Launch chunked Arabic playback via ArabicSpeechController
+  const startStreamingChunks = useCallback((chunks: string[]) => {
+    if (!chunks || chunks.length === 0) return;
+    setSpeechNotice(null);
+    getSpeechController().playChunks(chunks);
+  }, [getSpeechController]);
+
+  // Stream a single message or response by splitting into Arabic sentence chunks
+  const startStreamingSingleText = useCallback((text: string) => {
+    if (!text) return;
+    const chunks = splitSpeechTextIntoChunks(text, 28);
+    if (chunks.length > 0) {
+      startStreamingChunks(chunks);
+    }
+  }, [startStreamingChunks]);
+
+  // Skip to next sentence in queue
+  const handleSkipNext = () => {
+    playTone('chime');
+    getSpeechController().skipNext();
+  };
+
+  // Skip to previous sentence in queue
+  const handleSkipPrev = () => {
+    playTone('chime');
+    getSpeechController().skipPrev();
+  };
+
+  // Break a full article into natural Arabic audio chunks
+  const createArticleAudioChunks = (article: Article, mode: 'full' | 'summary' = 'full'): string[] => {
+    return createArticleSpeechChunks(article, mode, ownerName);
+  };
+
+  // Instant Read Article Handler
+  const handleReadCurrentArticle = useCallback((mode: 'full' | 'summary' = 'full', specificArticle?: Article) => {
+    const target = specificArticle || currentArticle || articles[0];
+    if (!target) return;
+
+    playTone('chime');
+
+    if (specificArticle && (!currentArticle || currentArticle.id !== specificArticle.id)) {
+      onSelectArticle(specificArticle);
+    }
+
+    const chunks = createArticleSpeechChunks(target, mode, ownerName);
+
+    const logMsg: DialogueMessage = {
+      id: 'msg-' + Date.now(),
+      sender: 'assistant',
+      text: `🎙️ **بدء القراءة الصوتية لمقال:** «${target.title}»\nبقلم كاتب المقال وصاحب الموقع المهندس ${ownerName}.`,
+      timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    setDialogueHistory((prev) => [...prev, logMsg]);
+    startStreamingChunks(chunks);
+  }, [articles, currentArticle, ownerName, onSelectArticle, playTone, startStreamingChunks]);
+
+  // Global Keyboard Shortcuts (Alt + S / Alt + R) & Custom Open Event (supports autoReadArticle)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.altKey && (e.key === 'r' || e.key === 'R' || e.key === 's' || e.key === 'S')) || (e.ctrlKey && e.altKey && e.key === 'a')) {
@@ -265,9 +390,17 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
 
-    const handleOpenEvent = () => {
-      setIsOpen(true);
-      playTone('start');
+    const handleOpenEvent = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail;
+      if (detail?.autoReadArticle) {
+        hasAutoStartedRef.current = true;
+        setIsOpen(true);
+        playTone('start');
+        handleReadCurrentArticle('full', detail.article || currentArticle || articles[0]);
+      } else {
+        setIsOpen(true);
+        playTone('start');
+      }
     };
     window.addEventListener('open-blind-screen-reader', handleOpenEvent);
 
@@ -275,262 +408,7 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('open-blind-screen-reader', handleOpenEvent);
     };
-  }, [playTone]);
-
-  // Welcome announcement on initial open
-  useEffect(() => {
-    if (isOpen && dialogueHistory.length === 0) {
-      const welcomeText = `مرحباً بك يا ضيفنا العزيز في دار ألفا ديزاين. أنا قارئ الشاشة الذكي ومضيفك الصوتي المتحدث باسم المهندس «${ownerName}». أنا جاهز فوراً لقراءة المقالات، أو وصف روعة الألوان والديكورات بحس فني راقٍ، أو ترشيح أفضل الحلول لمنزلك. تحدث بأمرك الصوتي وسأجيبك في الحال!`;
-      const welcome: DialogueMessage = {
-        id: 'msg-welcome',
-        sender: 'assistant',
-        text: welcomeText,
-        timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
-      };
-      setDialogueHistory([welcome]);
-      // Stream welcome text instantly in short chunks
-      startStreamingSingleText(welcomeText);
-    }
-  }, [isOpen, ownerName]);
-
-  // Auto scroll to latest dialogue message
-  useEffect(() => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-    }
-  }, [dialogueHistory]);
-
-  // Stop Speech Synthesis immediately
-  const stopSpeaking = () => {
-    isQueueActiveRef.current = false;
-    if (synthRef.current) {
-      synthRef.current.cancel();
-    }
-    setIsSpeaking(false);
-    setIsPaused(false);
-    setActiveSentenceIndex(-1);
-    queueRef.current = [];
-    queueIndexRef.current = 0;
-  };
-
-  // Pause Speech
-  const pauseSpeaking = () => {
-    if (synthRef.current && isSpeaking) {
-      synthRef.current.pause();
-      setIsPaused(true);
-    }
-  };
-
-  // Resume Speech
-  const resumeSpeaking = () => {
-    if (synthRef.current && isPaused) {
-      synthRef.current.resume();
-      setIsPaused(false);
-    }
-  };
-
-  // Execute playing the chunk currently pointed to by queueIndexRef
-  const playCurrentQueueChunk = () => {
-    if (!synthRef.current || !isQueueActiveRef.current) return;
-
-    const index = queueIndexRef.current;
-    const chunks = queueRef.current;
-
-    if (index >= chunks.length) {
-      // Completed full queue
-      isQueueActiveRef.current = false;
-      setIsSpeaking(false);
-      setIsPaused(false);
-      setActiveSentenceIndex(-1);
-      return;
-    }
-
-    const chunkText = chunks[index];
-    setCurrentReadingText(chunkText);
-    setActiveSentenceIndex(index);
-
-    const utterance = new SpeechSynthesisUtterance(chunkText);
-    utterance.lang = 'ar-SA';
-    utterance.rate = speedRef.current;
-    utterance.pitch = 1.0;
-
-    if (selectedVoiceRef.current) {
-      utterance.voice = selectedVoiceRef.current;
-    }
-
-    utterance.onstart = () => {
-      setIsSpeaking(true);
-      setIsPaused(false);
-    };
-
-    utterance.onend = () => {
-      if (isQueueActiveRef.current) {
-        queueIndexRef.current += 1;
-        // Natural 40ms breathing pause between sentences
-        setTimeout(() => {
-          if (isQueueActiveRef.current) {
-            playCurrentQueueChunk();
-          }
-        }, 40);
-      }
-    };
-
-    utterance.onerror = (e) => {
-      if (e.error === 'interrupted' || e.error === 'canceled') return;
-      if (isQueueActiveRef.current) {
-        queueIndexRef.current += 1;
-        playCurrentQueueChunk();
-      }
-    };
-
-    synthRef.current.speak(utterance);
-  };
-
-  // Ultra-Fast Streaming Queue Launcher: Starts speaking in <50ms!
-  const startStreamingChunks = (chunks: string[]) => {
-    if (!synthRef.current || chunks.length === 0) return;
-
-    // Cancel any ongoing speech immediately
-    synthRef.current.cancel();
-
-    queueRef.current = chunks;
-    queueIndexRef.current = 0;
-    isQueueActiveRef.current = true;
-    setTotalChunksCount(chunks.length);
-    setActiveSentenceIndex(0);
-    setIsSpeaking(true);
-    setIsPaused(false);
-
-    // Speak the first chunk IMMEDIATELY (takes ~20ms!)
-    playCurrentQueueChunk();
-  };
-
-  // Stream a single message or response by splitting into fast sentence chunks
-  const startStreamingSingleText = (text: string) => {
-    if (!text) return;
-    const clean = text
-      .replace(/#+\s/g, '')
-      .replace(/\*\*([^*]+)\*\*/g, '$1')
-      .replace(/\*([^*]+)\*/g, '$1')
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/>\s/g, '')
-      .replace(/!\[.*?\]\(.*?\)/g, '')
-      .trim();
-
-    const parts = clean
-      .split(/(?<=[.،؛؟!\n])/)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
-
-    const chunks = parts.length > 0 ? parts : [clean];
-    startStreamingChunks(chunks);
-  };
-
-  // Skip to next sentence in queue
-  const handleSkipNext = () => {
-    if (!isQueueActiveRef.current || queueIndexRef.current >= queueRef.current.length - 1) return;
-    if (synthRef.current) {
-      synthRef.current.cancel();
-    }
-    queueIndexRef.current += 1;
-    playTone('chime');
-    playCurrentQueueChunk();
-  };
-
-  // Skip to previous sentence in queue
-  const handleSkipPrev = () => {
-    if (!isQueueActiveRef.current || queueIndexRef.current <= 0) return;
-    if (synthRef.current) {
-      synthRef.current.cancel();
-    }
-    queueIndexRef.current -= 1;
-    playTone('chime');
-    playCurrentQueueChunk();
-  };
-
-  // Break a full article into fast, natural, zero-latency audio chunks (15-25 words each)
-  const createArticleAudioChunks = (article: Article, mode: 'full' | 'summary' = 'full'): string[] => {
-    const chunks: string[] = [];
-
-    // Chunk 1: Instant opening greeting (starts playing in 20ms!)
-    chunks.push(`أهلاً بك يا ضيفنا العزيز في دار ألفا ديزاين. نبدأ قراءة مقال: «${article.title}»، بقلم كاتب المقال وصاحب الموقع المهندس ${ownerName}.`);
-
-    // Chunk 2: Excerpt overview
-    if (article.excerpt) {
-      chunks.push(`الملخص: ${article.excerpt}`);
-    }
-
-    if (mode === 'summary') {
-      chunks.push(`هذا المقال يقع ضمن تصنيف ${article.category}، مع وقت قراءة تقديري ${article.readingTime} دقائق. استمع إلى كامل المقال متى شئت.`);
-      return chunks;
-    }
-
-    // Full Mode: Clean and segment content into natural human phrases
-    const cleanContent = (article.content || '')
-      .replace(/!\[.*?\]\(.*?\)/g, '') // strip images
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links to text
-      .replace(/#+\s*(.*)/g, 'عنوان رئيسي: $1.') // headings
-      .replace(/\*\*([^*]+)\*\*/g, '$1') // bold
-      .replace(/\*([^*]+)\*/g, '$1') // italics
-      .replace(/>\s*(.*)/g, 'نصيحة هامة: $1.') // quotes
-      .replace(/[-*]\s*/g, 'نقطة: ') // bullets
-      .trim();
-
-    const rawSentences = cleanContent
-      .split(/(?<=[.،؛؟!\n])/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 3);
-
-    // Group sentences so each chunk is roughly 15-25 words for maximum TTS responsiveness
-    let currentBlock = '';
-    for (const sent of rawSentences) {
-      const combined = currentBlock ? `${currentBlock} ${sent}` : sent;
-      if (combined.split(/\s+/).length > 25) {
-        if (currentBlock.trim()) {
-          chunks.push(currentBlock.trim());
-        }
-        currentBlock = sent;
-      } else {
-        currentBlock = combined;
-      }
-    }
-    if (currentBlock.trim()) {
-      chunks.push(currentBlock.trim());
-    }
-
-    // Final closing chunk
-    chunks.push(`تمت قراءة المقال بالكامل. يسعدنا دائماً في دار ألفا ديزاين تلقي استفساراتك وحجز استشارة تشطيب ومعاينة مع المهندس ${ownerName}.`);
-
-    return chunks;
-  };
-
-  // Instant Read Article Handler: ZERO DELAY, starts speaking in <50ms!
-  const handleReadCurrentArticle = (mode: 'full' | 'summary' = 'full', specificArticle?: Article) => {
-    const target = specificArticle || currentArticle || articles[0];
-    if (!target) return;
-
-    playTone('chime');
-
-    // If it's a specific article and not open, select it
-    if (specificArticle && (!currentArticle || currentArticle.id !== specificArticle.id)) {
-      onSelectArticle(specificArticle);
-    }
-
-    const chunks = createArticleAudioChunks(target, mode);
-
-    const logMsg: DialogueMessage = {
-      id: 'msg-' + Date.now(),
-      sender: 'assistant',
-      text: `🎙️ **بدء القراءة الفورية لمقال:** «${target.title}»\nبقلم كاتب المقال وصاحب الموقع المهندس ${ownerName}. جارٍ القراءة بالصوت المباشر الآن...`,
-      timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
-    };
-
-    setDialogueHistory((prev) => [...prev, logMsg]);
-
-    // Launch streaming chunks immediately!
-    startStreamingChunks(chunks);
-  };
+  }, [playTone, stopSpeaking, handleReadCurrentArticle, currentArticle, articles]);
 
   // Instant Sensory Color & Image Description (0ms local fallback, instant audio)
   const handleDescribeVisualsAndColors = async (articleParam?: Article) => {
@@ -705,8 +583,8 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
     if (/(كمل|استمر|تابع|واصل|resume|play)/i.test(lower)) {
       if (isPaused) {
         resumeSpeaking();
-      } else if (isQueueActiveRef.current) {
-        playCurrentQueueChunk();
+      } else if (isSpeaking) {
+        handleSkipNext();
       } else {
         handleReadCurrentArticle('full');
       }
@@ -951,10 +829,10 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="font-black text-sm sm:text-base tracking-wide text-slate-950">
-                    قارئ الشاشة الفوري
+                    قارئ المقالات العربي الذكي
                   </h2>
-                  <span className="px-2 py-0.5 rounded-full bg-slate-950 text-emerald-400 text-[10px] font-black uppercase">
-                    ⚡ تحميل فوري 0ms
+                  <span className="px-2 py-0.5 rounded-full bg-slate-950 text-emerald-400 text-[10px] font-black">
+                    {activeEngine === 'gemini' ? 'صوت عربي ذكي' : 'نطق عربي مباشر'}
                   </span>
                 </div>
                 <p className="text-[11px] font-bold text-slate-900/90">
@@ -986,7 +864,9 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
             <div className="flex items-center gap-2">
               <span
                 className={`w-3 h-3 rounded-full ${
-                  isSpeaking
+                  isLoadingAudio
+                    ? 'bg-sky-400 animate-pulse'
+                    : isSpeaking
                     ? 'bg-emerald-400 animate-ping'
                     : isListening
                     ? 'bg-red-500 animate-bounce'
@@ -994,7 +874,9 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
                 }`}
               ></span>
               <span className="font-bold text-[11px] text-amber-300">
-                {isSpeaking
+                {isLoadingAudio
+                  ? 'جارٍ تجهيز الصوت العربي الواضح...'
+                  : isSpeaking
                   ? isPaused
                     ? 'القراءة متوقفة مؤقتاً'
                     : `جارٍ القراءة (${activeSentenceIndex + 1} من ${totalChunksCount || 1})`
@@ -1115,11 +997,29 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
             </button>
           </div>
 
+          {/* Arabic Voice Engine Notice if OS lacks Arabic pack and no Gemini key */}
+          {speechNotice && (
+            <div className="p-3 bg-rose-950/80 border-b border-rose-500/40 text-rose-200 text-xs flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed font-medium">{speechNotice}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSpeechNotice(null)}
+                className="text-rose-300 hover:text-white p-0.5 cursor-pointer"
+                aria-label="إغلاق التنبيه"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* Active Sentence Visual Highlighting Box */}
           {isSpeaking && currentReadingText && (
             <div className="p-3 bg-amber-500/10 border-b border-amber-500/30 text-amber-200 text-xs flex items-start gap-2.5">
               <span className="p-1 rounded-md bg-amber-500 text-slate-950 font-black text-[10px] shrink-0 mt-0.5">
-                يُقرأ الآن
+                {isLoadingAudio ? 'جارٍ التحميل' : 'يُقرأ الآن'}
               </span>
               <p className="font-semibold leading-relaxed line-clamp-2">
                 "{currentReadingText}"
@@ -1321,7 +1221,7 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
 
             {/* Accessibility Keyboard & Voice Help Tips */}
             <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
-              <span>⚡ قراءة فورية في 0ms • قل: «اقرأ المقال»، «صف الألوان»، «رشح مقال»</span>
+              <span>🎙️ قل أو اكتب: «اقرأ المقال»، «صف الألوان»، «رشح مقال»</span>
               <span className="font-mono bg-slate-800 px-1.5 py-0.5 rounded text-amber-300">Alt + S</span>
             </div>
           </footer>

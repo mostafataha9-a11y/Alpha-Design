@@ -49,13 +49,15 @@ export const SocialBroadcastModal: React.FC<SocialBroadcastModalProps> = ({
   const [isBroadcastingAll, setIsBroadcastingAll] = useState(false);
   const [broadcastDone, setBroadcastDone] = useState(false);
 
+  const encodedArticleUrl = `${window.location.origin}/#article-${encodeURIComponent(article.slug || article.id)}`;
+
   // Default broadcast texts
   const [socialTexts, setSocialTexts] = useState<Record<string, string>>({
-    twitter: `مقال جديد في مدونة ألفا ديزاين 🎨✨\n\n"${article.title}"\n\nتصفح المقال بالكامل من الرابط:\n${window.location.origin}/#${article.slug}\n\n#ألفا_ديزاين #تصميم_جرافيك #UIUX`,
-    linkedin: `يسعدنا مشاركة أحدث مقالاتنا المتخصصة في مدونة ألفا ديزاين:\n\n📌 "${article.title}"\n\n${article.excerpt}\n\nرابط القراءة والمناقشة:\n${window.location.origin}/#${article.slug}\n\n#تصميم #هوية_بصرية #ابتكار`,
-    facebook: `مقال جديد ننصحك بقراءته على مدونة ألفا ديزاين!\n\n"${article.title}"\n${article.excerpt}\n\nاقرأ التفاصيل الآن:\n${window.location.origin}/#${article.slug}`,
-    telegram: `📢 مقال جديد على ألفا ديزاين\n\n🔹 ${article.title}\n\n${article.excerpt}\n\n🔗 تصفح المقال:\n${window.location.origin}/#${article.slug}`,
-    whatsapp: `مرحباً، أشاركك هذا المقال القيم من مدونة ألفا ديزاين: "${article.title}". يمكنك قراءته من هنا:\n${window.location.origin}/#${article.slug}`,
+    twitter: `مقال جديد في مدونة ألفا للديكور والدهانات 🎨✨\n\n"${article.title}"\n\nتصفح المقال بالكامل من الرابط:\n${encodedArticleUrl}\n\n#ألفا_للديكور #دهانات_حوائط #بديل_الرخام`,
+    linkedin: `يسعدنا مشاركة أحدث مقالاتنا المتخصصة في مدونة ألفا للديكور والدهانات:\n\n📌 "${article.title}"\n\n${article.excerpt}\n\nرابط القراءة والمناقشة:\n${encodedArticleUrl}\n\n#ديكورات_حديثة #تشطيبات #ألفا_للديكور`,
+    facebook: `مقال جديد ننصحك بقراءته على مدونة ألفا للديكور والدهانات!\n\n"${article.title}"\n${article.excerpt}\n\nاقرأ التفاصيل الآن:\n${encodedArticleUrl}`,
+    telegram: `📢 مقال جديد على مدونة ألفا للديكور والدهانات\n\n🔹 ${article.title}\n\n${article.excerpt}\n\n🔗 تصفح المقال:\n${encodedArticleUrl}`,
+    whatsapp: `مرحباً، أشاركك هذا المقال القيم من مدونة ألفا للديكور والدهانات: "${article.title}". يمكنك قراءته من هنا:\n${encodedArticleUrl}`,
   });
 
   // Generate smart AI copy via direct Client-side Gemini SDK
@@ -66,7 +68,7 @@ export const SocialBroadcastModal: React.FC<SocialBroadcastModalProps> = ({
       const broadcasts = await generateSocialBroadcastWithGeminiClient({
         articleTitle: article.title,
         articleExcerpt: article.excerpt,
-        articleUrl: `${window.location.origin}/#${article.slug}`,
+        articleUrl: encodedArticleUrl,
         tags: article.tags,
         authorName,
       });
@@ -102,7 +104,7 @@ export const SocialBroadcastModal: React.FC<SocialBroadcastModalProps> = ({
         id: 'b-' + Date.now(),
         articleId: article.id,
         articleTitle: article.title,
-        articleUrl: `${window.location.origin}/#${article.slug}`,
+        articleUrl: encodedArticleUrl,
         timestamp: new Date().toISOString(),
         networks: broadcastConfig.activeNetworks,
         status: 'published',
@@ -125,7 +127,7 @@ export const SocialBroadcastModal: React.FC<SocialBroadcastModalProps> = ({
     whatsapp: { icon: MessageCircle, color: 'hover:bg-emerald-600 text-emerald-600', name: 'WhatsApp' },
   };
 
-  const articleUrl = `${window.location.origin}/#${article.slug}`;
+  const articleUrl = encodedArticleUrl;
 
   const shareUrls: Record<string, string> = {
     twitter: `https://twitter.com/intent/tweet?text=${encodeURIComponent(socialTexts.twitter || article.title)}`,
@@ -179,6 +181,12 @@ export const SocialBroadcastModal: React.FC<SocialBroadcastModalProps> = ({
             <img
               src={article.featuredImage}
               alt={article.title}
+              onError={(e) => {
+                const target = e.currentTarget;
+                if (!target.src.includes('photo-1618221195710')) {
+                  target.src = 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=1200&q=80';
+                }
+              }}
               className="w-16 h-16 rounded-xl object-cover shrink-0"
             />
             <div className="min-w-0 flex-1 space-y-1">

@@ -229,9 +229,11 @@ export default function App() {
         return;
       }
 
-      // Explicit article hash (e.g. #article-slug)
-      if (decodedHash.startsWith('article-')) {
-        const articleSlugOrId = decodedHash.replace(/^article-/, '');
+      // Explicit or bare article hash (e.g. #article-slug or #slug)
+      if (decodedHash.startsWith('article-') || decodedHash.length > 0) {
+        const articleSlugOrId = decodedHash.startsWith('article-')
+          ? decodedHash.replace(/^article-/, '')
+          : decodedHash;
         const matched = articlesRef.current.find(
           (a) =>
             a.slug === articleSlugOrId ||
@@ -298,8 +300,10 @@ export default function App() {
       return;
     }
 
-    if (decodedHash.startsWith('article-')) {
-      const key = decodedHash.replace(/^article-/, '');
+    if (decodedHash && !['home', 'articles', 'about', 'contact', 'privacy', 'terms', 'backend'].includes(decodedHash)) {
+      const key = decodedHash.startsWith('article-')
+        ? decodedHash.replace(/^article-/, '')
+        : decodedHash;
       const matched = list.find(
         (a) => a.slug === key || a.id === key || encodeURIComponent(a.slug) === key
       );
@@ -551,16 +555,30 @@ export default function App() {
             return;
           }
         }
-        // Static Vercel periodic sync from Cloud Firestore
+        // Static Vercel periodic sync from Cloud Firestore (merge safely without dropping unsynced local posts)
         const fsArticles = await fetchPublishedArticlesFromFirestore();
         if (fsArticles.length > 0) {
           setArticles((prev) => {
             const draftOnly = adminUserRef.current?.isLoggedIn
               ? prev.filter((a) => a.status === 'draft')
               : [];
-            const fsIds = new Set(fsArticles.map((a) => a.id));
-            const baseSeed = INITIAL_ARTICLES.filter((a) => !fsIds.has(a.id));
-            const combined = [...draftOnly, ...fsArticles, ...baseSeed].sort((a, b) =>
+            const prevPublishedIds = new Set(fsArticles.map((a) => a.id));
+            const localExtra = prev.filter((a) => a.status !== 'draft' && !prevPublishedIds.has(a.id));
+            const baseMap = new Map<string, Article>();
+            [...INITIAL_ARTICLES, ...localExtra, ...fsArticles, ...draftOnly].forEach((a) => {
+              if (!a?.id) return;
+              const existing = baseMap.get(a.id);
+              if (existing) {
+                baseMap.set(a.id, {
+                  ...existing,
+                  ...a,
+                  likes: Math.max(Number(a.likes) || 0, Number(existing.likes) || 0),
+                });
+              } else {
+                baseMap.set(a.id, a);
+              }
+            });
+            const combined = Array.from(baseMap.values()).sort((a, b) =>
               String(b.publishedAt || '').localeCompare(String(a.publishedAt || ''))
             );
             try {
@@ -963,6 +981,7 @@ export default function App() {
               article={selectedArticle || publicArticles[0] || articles[0]}
               settings={settings}
               onBack={() => navigateToTab('home')}
+              onNavigateArticles={() => navigateToTab('articles')}
               onSelectArticle={handleSelectArticle}
               allArticles={publicArticles}
               onAddComment={handleAddComment}
@@ -1086,7 +1105,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => {
-              setSelectedCategory('أخبار الديكور والدهانات');
+              setSelectedCategory('أحدث الأخبار والمستجدات');
               navigateToTab('articles');
             }}
             className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-full hover:bg-white/10 text-slate-200 text-xs font-semibold transition-colors cursor-pointer"

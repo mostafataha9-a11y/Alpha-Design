@@ -896,3 +896,128 @@ export async function blindReaderDialogueWithGeminiClient(input: {
 
   return extractAndParseJson(text);
 }
+
+// ---------------------------------------------------------------------------
+// 6. ARABIC TEXT-TO-SPEECH (Client-side Direct @google/genai TTS)
+// ---------------------------------------------------------------------------
+
+const CLIENT_TTS_MODELS = ['gemini-3.8-flash-lite-tts', 'gemini-2.5-flash-preview-tts'] as const;
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const slice = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, Array.from(slice));
+  }
+  return btoa(binary);
+}
+
+function wrapPcm16AsWavBase64(pcmBase64: string, sampleRate = 24000, channels = 1): string {
+  const pcmBytes = base64ToUint8Array(pcmBase64);
+  const blockAlign = channels * 2;
+  const byteRate = sampleRate * blockAlign;
+  const buffer = new ArrayBuffer(44 + pcmBytes.length);
+  const view = new DataView(buffer);
+
+  const writeAscii = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i += 1) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + pcmBytes.length, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, pcmBytes.length, true);
+
+  new Uint8Array(buffer, 44).set(pcmBytes);
+  return uint8ArrayToBase64(new Uint8Array(buffer));
+}
+
+export async function synthesizeArabicSpeechWithGeminiClient(input: {
+  text: string;
+  voiceName?: string;
+}): Promise<{ audioBase64: string; mimeType: string; dataUrl: string; modelUsed: string }> {
+  const cleanText = (input.text || '').trim();
+  if (!cleanText) {
+    throw new GeminiKeyError('API_ERROR', 'لا يوجد نص عربي لقراءته صوتياً.');
+  }
+
+  const ai = createValidatedClient();
+  const voiceName = input.voiceName || 'Kore';
+  let lastError: unknown = null;
+
+  for (const model of CLIENT_TTS_MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: `اقرأ النص العربي التالي باللغة العربية الفصحى بنبرة دافئة وواضحة وبإلقاء إذاعي متزن دون إضافة أي تعليق أو مقدمات من عندك:\n\n${cleanText}`,
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
+          },
+        },
+      });
+
+      const parts = response.candidates?.[0]?.content?.parts || [];
+      const audioPart = parts.find((p: any) => p?.inlineData?.data);
+      const inlineData = audioPart?.inlineData;
+
+      if (!inlineData?.data) {
+        throw new Error('لم يُعد النموذج بيانات صوتية صالحة.');
+      }
+
+      let mimeType = (inlineData.mimeType || 'audio/wav').toLowerCase();
+      let base64Audio = inlineData.data;
+
+      if (mimeType.includes('pcm') || mimeType.includes('l16')) {
+        const rateMatch = mimeType.match(/rate=(\d+)/);
+        const sampleRate = rateMatch ? Number(rateMatch[1]) || 24000 : 24000;
+        base64Audio = wrapPcm16AsWavBase64(base64Audio, sampleRate, 1);
+        mimeType = 'audio/wav';
+      } else if (!mimeType.startsWith('audio/')) {
+        mimeType = 'audio/wav';
+      }
+
+      return {
+        audioBase64: base64Audio,
+        mimeType,
+        dataUrl: `data:${mimeType};base64,${base64Audio}`,
+        modelUsed: model,
+      };
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err || '');
+      if (isModelNotFoundError(msg)) {
+        continue;
+      }
+      classifyAndThrowGeminiError(err);
+    }
+  }
+
+  classifyAndThrowGeminiError(lastError);
+}
+

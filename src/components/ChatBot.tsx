@@ -85,8 +85,8 @@ export const ChatBot: React.FC<ChatBotProps> = ({
     {
       role: 'assistant',
       content: isAr
-        ? `مرحباً بك في مدونة واستوديو **ألفا ديزاين** للمصمم **${authorName}**!\n\nأنا **مساعد ألفا الذكي**؛ مفوض رسمياً بتقديم الاستشارات، وحساب أسعار الأعمال المطلوبة والتفاوض معك حول الميزانية والتسليم.\n\nعند الاتفاق على السعر، سأقوم بتحويلك مباشرة إلى **واتساب صاحب المدونة** أو الاتصال برقم هاتفه فوراً للبدء!`
-        : `Welcome to **Alpha Design** founded by **${authorName}**!\n\nI am your AI Assistant & Sales Negotiator. I can calculate project costs, negotiate budgets according to ${authorName}'s rates, and upon agreement, directly connect you to WhatsApp or phone!`,
+        ? `مرحباً بك في مدونة **ألفا للديكور والدهانات** بإشراف المهندس **${authorName}**!\n\nأنا **مساعد ألفا الذكي**؛ أساعدك في اختيار ألوان الدهانات وبديل الرخام والخشب، وحساب تكاليف التشطيب التقريبية والتفاوض معك على السعر وموعد التنفيذ.\n\nعند الاتفاق على التفاصيل، أربطك مباشرة بـ **واتساب المهندس ${authorName}** أو هاتفه لبدء المعاينة والتنفيذ!`
+        : `Welcome to **Alpha Decor & Paints** founded by **${authorName}**!\n\nI am your AI Decor Consultant & Price Negotiator. I can estimate finishing costs, discuss project scope, and connect you directly with ${authorName} via WhatsApp or phone!`,
     },
   ]);
 
@@ -103,29 +103,29 @@ export const ChatBot: React.FC<ChatBotProps> = ({
   const suggestedPrompts = activeMode === 'negotiate'
     ? (isAr
         ? [
-            'أريد تصميم هوية بصرية كاملة، كم السعر؟',
-            'كم تكلفة تصميم وتطوير موقع إلكتروني؟',
-            'أريد تصميم واجهات UI/UX لتطبيق جوال مع خصم',
-            'كم سعر كتابة 5 مقالات متوافقة مع السيو؟',
+            'أريد تشطيب دهانات شقة 120 متر، كم التكلفة التقريبية؟',
+            'كم سعر متر بديل الرخام وبديل الخشب مع التركيب؟',
+            'أريد تنفيذ جدار تلفزيون ديكوري مع إضاءة مخفية',
+            'كيف أحجز معاينة ومقايسة تشطيب مع المهندس الحضرى؟',
           ]
         : [
-            'How much is a full Brand Identity & Logo?',
-            'What is the price for custom website development?',
-            'I need mobile app UI/UX design, any discount?',
-            'Cost of 5 SEO-optimized blog articles?',
+            'What is the estimated painting cost for a 120m apartment?',
+            'Price per square meter for faux marble & wood slats?',
+            'I need a custom TV wall decor with LED lighting',
+            'How do I book an on-site finishing inspection?',
           ])
     : (isAr
         ? [
-            '💼 أريد الاستفسار عن أسعار وطلب عمل جديد',
+            '💼 أريد الاستفسار عن أسعار الدهانات وحساب التكلفة',
             'ما هي أحدث المقالات المنشورة في المدونة؟',
-            'كيف أختار ألوان متناسقة لهويتي التجارية؟',
-            'انشر رابط أحدث مقال في وسائل التواصل الاجتماعي',
+            'كيف أنسق ألوان الجريج والأوف وايت مع الإضاءة الدافئة؟',
+            'كيف أعالج رطوبة الجدران قبل المعجون والدهان؟',
           ]
         : [
-            '💼 I want to request work & negotiate price',
-            'What are the latest articles on Alpha Design?',
-            'How to choose harmonious branding colors?',
-            'Broadcast latest post to social media',
+            '💼 I want decor pricing & finishing estimate',
+            'What are the latest articles on Alpha Decor?',
+            'How to pair Greige & Off-White paints with warm LED lighting?',
+            'How do I treat wall moisture before painting?',
           ]);
 
   const scrollToBottom = () => {
@@ -172,8 +172,8 @@ export const ChatBot: React.FC<ChatBotProps> = ({
     try {
       const parsed = JSON.parse(match[1]);
       const deal: ParsedDeal = {
-        service: parsed.service || (isAr ? 'مشروع تصميم مخصص' : 'Custom Project'),
-        agreedPrice: parsed.agreedPrice || '300$',
+        service: parsed.service || (isAr ? 'مشروع ديكور ودهانات مخصص' : 'Custom Decor & Finishing Project'),
+        agreedPrice: parsed.agreedPrice || 'حسب المقايسة',
         originalPrice: parsed.originalPrice,
         savings: parsed.savings,
         scope: parsed.scope || (isAr ? 'حسب المواصفات المحددة في المحادثة' : 'Per discussion'),
@@ -191,17 +191,17 @@ export const ChatBot: React.FC<ChatBotProps> = ({
 
   const getWhatsAppUrl = (deal: ParsedDeal) => {
     const text = isAr
-      ? `مرحباً أستاذ ${authorName}،
-لقد اتفقت للتو مع المساعد الذكي في مدونة ألفا ديزاين على تنفيذ خدمة:
+      ? `مرحباً مهندس ${authorName}،
+لقد اتفقت للتو مع المساعد الذكي في مدونة ألفا للديكور والدهانات على تنفيذ خدمة:
 📌 *${deal.service}*
-💰 *السعر المتفق عليه:* ${deal.agreedPrice} ${deal.savings ? `(توفير: ${deal.savings})` : ''}
-⏱️ *مدة التسليم المعتمدة:* ${deal.deliveryDays || 5} أيام عمل
+💰 *التكلفة التقديرية:* ${deal.agreedPrice} ${deal.savings ? `(توفير: ${deal.savings})` : ''}
+⏱️ *مدة التنفيذ المقترحة:* ${deal.deliveryDays || 5} أيام عمل
 📝 *تفاصيل العمل:* ${deal.scope || deal.clientNeeds || 'حسب الاتفاق'}
-🔖 *رقم مرجع الاتفاق:* #${deal.dealId}
+🔖 *رقم المرجع:* #${deal.dealId}
 
-أود تأكيد الحجز وبدء تنفيذ المشروع معك مباشرة!`
+أود تأكيد الموعد وحجز المعاينة معك مباشرة!`
       : `Hello ${authorName},
-I just reached an agreement with Alpha Design AI Assistant for:
+I just reached an agreement with Alpha Decor & Paints AI Assistant for:
 📌 *${deal.service}*
 💰 *Agreed Price:* ${deal.agreedPrice}
 ⏱️ *Delivery Time:* ${deal.deliveryDays || 5} days
