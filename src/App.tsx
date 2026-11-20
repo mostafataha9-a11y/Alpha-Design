@@ -94,6 +94,7 @@ export default function App() {
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('الكل');
   const [isChatBotOpen, setIsChatBotOpen] = useState(false);
+  const [chatBotMode, setChatBotMode] = useState<'general' | 'negotiate'>('general');
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
   const [articleForShareModal, setArticleForShareModal] = useState<Article | null>(null);
   const [floatingCopied, setFloatingCopied] = useState(false);
@@ -874,7 +875,10 @@ export default function App() {
             navigateToTab(tab);
           }
         }}
-        onOpenBot={() => setIsChatBotOpen(true)}
+        onOpenBot={() => {
+          setChatBotMode('general');
+          setIsChatBotOpen(true);
+        }}
         onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
         adminUser={adminUser}
       />
@@ -916,7 +920,10 @@ export default function App() {
             selectedCategory={selectedCategory}
             setSelectedCategory={setSelectedCategory}
             onBroadcastComplete={handleBroadcastComplete}
-            onOpenChatBot={() => setIsChatBotOpen(true)}
+            onOpenChatBot={(mode) => {
+              setChatBotMode(mode || 'general');
+              setIsChatBotOpen(true);
+            }}
           />
         )}
 
@@ -947,7 +954,10 @@ export default function App() {
         {activeTab === 'contact' && (
           <ContactView
             settings={settings}
-            onOpenChatBot={() => setIsChatBotOpen(true)}
+            onOpenChatBot={() => {
+              setChatBotMode('general');
+              setIsChatBotOpen(true);
+            }}
             onNavigateHome={() => navigateToTab('home')}
           />
         )}
@@ -1155,6 +1165,7 @@ export default function App() {
         articles={articles.filter((a) => a.status !== 'draft')}
         currentArticle={selectedArticle}
         onSelectArticle={handleSelectArticle}
+        initialMode={chatBotMode}
       />
 
       {/* Screen Reader & Voice Host for the Visually Impaired (on the Right Side of the Screen) */}

@@ -26,6 +26,7 @@ import {
   blindReaderDialogueWithGeminiClient,
   isGeminiKeyError,
   formatGeminiArabicError,
+  withTimeout,
 } from '../services/geminiClient';
 import {
   ArabicSpeechController,
@@ -33,6 +34,7 @@ import {
   createArticleSpeechChunks,
   splitSpeechTextIntoChunks,
   prepareArabicSpeechText,
+  getStrictArabicWebSpeechVoice,
 } from '../utils/arabicSpeech';
 
 // Web Speech API interface definitions for TypeScript
@@ -127,6 +129,8 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
   const recognitionRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const aiRequestIdRef = useRef<number>(0);
+  const processInputRef = useRef<(input: string) => void>(() => {});
 
   const ownerName = settings.authorName || 'الحضرى محمود';
 
@@ -253,7 +257,7 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
         recognition.onresult = (event: any) => {
           const transcript = event.results?.[0]?.[0]?.transcript;
           if (transcript) {
-            handleProcessUserInput(transcript);
+            processInputRef.current(transcript);
           }
         };
 
@@ -288,12 +292,12 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
     }
   }, [isOpen, ownerName, dialogueHistory.length]);
 
-  // Auto scroll to latest dialogue message
+  // Auto scroll to latest dialogue message or loading indicator
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
-  }, [dialogueHistory]);
+  }, [dialogueHistory, isLoadingAi]);
 
   // Stop Speech Synthesis immediately
   const stopSpeaking = useCallback(() => {
@@ -440,18 +444,23 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
       return;
     }
 
-    // 2. For newly published or other articles: Start speaking introductory chunk immediately in 20ms while fetching
-    const introChunk = `أهلاً بك يا ضيفنا العزيز في دار ألفا ديزاين. يسرني أن أصف لك الآن أدق تفاصيل الألوان وتناغم الإضاءة المعمارية في مقال: «${target.title}».`;
-    startStreamingSingleText(introChunk);
+    // 2. For newly published or other articles: Analyze with timeout so it never stalls or triggers duplicate TTS
+    setIsLoadingAi(true);
+    const requestId = ++aiRequestIdRef.current;
 
     try {
-      const data = await describeArticleVisualsWithGeminiClient({
-        articleTitle: target.title,
-        category: target.category,
-        excerpt: target.excerpt,
-        content: target.content,
-        ownerName,
-      });
+      const data = await withTimeout(
+        describeArticleVisualsWithGeminiClient({
+          articleTitle: target.title,
+          category: target.category,
+          excerpt: target.excerpt,
+          content: target.content,
+          ownerName,
+        }),
+        15000,
+        'انتهت مهلة وصف الألوان عبر الذكاء الاصطناعي.'
+      );
+      if (aiRequestIdRef.current !== requestId) return;
 
       const narrationText =
         data.audioDescription ||
@@ -469,8 +478,10 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
       setDialogueHistory((prev) => [...prev, logMsg]);
       startStreamingSingleText(narrationText);
     } catch (err) {
+      if (aiRequestIdRef.current !== requestId) return;
       if (isGeminiKeyError(err)) {
         const keyErrMsg = formatGeminiArabicError(err);
+        setSpeechNotice(keyErrMsg);
         setDialogueHistory((prev) => [
           ...prev,
           {
@@ -480,10 +491,25 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
             timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
           },
         ]);
-        startStreamingSingleText(keyErrMsg);
+        if (getStrictArabicWebSpeechVoice()) {
+          startStreamingSingleText(keyErrMsg);
+        }
       } else {
-        const fallback = `في هذا التصميم بإشراف المهندس ${ownerName}، يتناغم اللون الجريج الدافئ مع حوائط الأوف وايت الهادئة وألواح بديل الرخام الكلكتا الإيطالي، مما يمنح الفراغ عمقاً فندقياً راقياً.`;
+        const fallback = `في هذا التصميم لمقال «${target.title}» بإشراف المهندس ${ownerName}، يتناغم اللون الجريج الدافئ مع حوائط الأوف وايت الهادئة وألواح بديل الرخام الكلكتا الإيطالي، مما يمنح الفراغ عمقاً فندقياً راقياً.`;
+        setDialogueHistory((prev) => [
+          ...prev,
+          {
+            id: 'msg-desc-fb-' + Date.now(),
+            sender: 'assistant',
+            text: `🎨 **الوصف السمعي المختصر لمقال «${target.title}»:**\n\n${fallback}`,
+            timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]);
         startStreamingSingleText(fallback);
+      }
+    } finally {
+      if (aiRequestIdRef.current === requestId) {
+        setIsLoadingAi(false);
       }
     }
   };
@@ -657,19 +683,61 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
       return;
     }
 
-    // 9. If complex custom query: Immediately speak immediate acknowledgment (in 20ms!) while AI answers
-    const immediateAck = `أهلاً بك يا ضيفنا العزيز. يسعدني الإجابة عليك بصوت المهندس ${ownerName}...`;
-    startStreamingSingleText(immediateAck);
+    // 8b. Instant Pure Greeting (0ms)
+    if (/^(مرحبا|مرحباً|اهلا|أهلا|أهلاً|السلام عليكم|اهلين|هاي|صباح الخير|مساء الخير|ازيك|إزيك)[!؟.\s]*$/i.test(lower)) {
+      playTone('chime');
+      const greetingText = `أهلاً وسهلاً بك يا ضيفنا العزيز في مدونة ألفا للديكور والدهانات بإشراف المهندس «${ownerName}». يمكنك طلب «اقرأ المقال» أو «صف الألوان» أو طرح أي سؤال حول الدهانات والديكورات وسأجيبك فوراً.`;
+      const greetMsg: DialogueMessage = {
+        id: 'msg-greet-' + Date.now(),
+        sender: 'assistant',
+        text: greetingText,
+        timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      };
+      setDialogueHistory((prev) => [...prev, greetMsg]);
+      startStreamingSingleText(greetingText);
+      return;
+    }
+
+    // 8c. Instant Help & Voice Commands Overview (0ms)
+    if (/(مساعدة|ساعدني|الاوامر|الأوامر|ماذا تفعل|تقدر تعمل ايه|كيف استخدم)/i.test(lower)) {
+      playTone('chime');
+      const helpText = `الأوامر السريعة الجاهزة لك الآن: قل «اقرأ المقال» لقراءة المقال النشط بالصوت العربي، أو «صف الألوان» لسماع وصف الديكور والألوان، أو «رشح مقال» لاستعراض أهم المقالات، أو «وقف» لإيقاف القراءة، أو اسألني أي سؤال في الدهانات والديكور.`;
+      const helpMsg: DialogueMessage = {
+        id: 'msg-help-' + Date.now(),
+        sender: 'assistant',
+        text: helpText,
+        timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      };
+      setDialogueHistory((prev) => [...prev, helpMsg]);
+      startStreamingSingleText(helpText);
+      return;
+    }
+
+    // 8d. Instant Articles List Query (0ms)
+    if (/^(اعرض|عرض|ما هي|ماهي|اخر|أحدث|قائمة|شوف)?\s*(المقالات|المواضيع|الاخبار|الأخبار)[!؟.\s]*$/i.test(lower)) {
+      handleRecommendArticles();
+      return;
+    }
+
+    // 9. Custom conversational query: audio chime feedback + bounded AI call (never hangs)
+    playTone('chime');
+    const requestId = ++aiRequestIdRef.current;
     setIsLoadingAi(true);
 
     try {
-      const data = await blindReaderDialogueWithGeminiClient({
-        userSpeech: userText,
-        currentArticle,
-        articles,
-        history: dialogueHistory.map((m) => ({ role: m.sender, text: m.text })),
-        ownerName,
-      });
+      const data = await withTimeout(
+        blindReaderDialogueWithGeminiClient({
+          userSpeech: userText,
+          currentArticle,
+          articles,
+          history: dialogueHistory.map((m) => ({ role: m.sender, text: m.text })),
+          ownerName,
+        }),
+        16000,
+        'انتهت مهلة تحليل الطلب من خدمة الذكاء الاصطناعي.'
+      );
+
+      if (aiRequestIdRef.current !== requestId) return;
 
       const replyText =
         data.speechResponse ||
@@ -706,21 +774,42 @@ export const BlindScreenReader: React.FC<BlindScreenReaderProps> = ({
       setDialogueHistory((prev) => [...prev, aiMsg]);
       startStreamingSingleText(replyText);
     } catch (err) {
-      const replyText = isGeminiKeyError(err)
-        ? `⚠️ ${formatGeminiArabicError(err)}`
-        : `يا ضيفنا العزيز، بصفتي مضيفك في دار ألفا ديزاين المتحدث باسم المهندس «${ownerName}»، أسعد بخدمتك في اختيار أجمل دهانات الحوائط وبديل الرخام. يمكنك سؤالي أو طلبي بقراءة أي مقال فوراً!`;
+      if (aiRequestIdRef.current !== requestId) return;
+      const keyErr = isGeminiKeyError(err);
+      const errMsgText = formatGeminiArabicError(err);
+      const matched = findArticleByKeywords(lower);
+
+      const replyText = keyErr
+        ? `⚠️ ${errMsgText}`
+        : matched
+          ? `لم يتمكن الخادم الذكي من الرد السريع الآن (${errMsgText})، لكنني وجدت لك مقالاً يطابق طلبك بعنوان: «${matched.title}». يمكنك الضغط على «اقرأ فوراً» لسماعه مباشرة.`
+          : `تعذر الحصول على رد فوري من الذكاء الاصطناعي حالياً (${errMsgText}). يمكنك اختيار أي مقال لقرأته فوراً بصوت عربي أو الضغط على «اقرأ المقال فوراً».`;
+
       const fallbackMsg: DialogueMessage = {
         id: 'msg-fb-' + Date.now(),
         sender: 'assistant',
         text: replyText,
         timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+        recommendedArticles: keyErr ? undefined : (matched ? [matched] : articles.slice(0, 2)),
       };
       setDialogueHistory((prev) => [...prev, fallbackMsg]);
-      startStreamingSingleText(replyText);
+
+      if (keyErr) {
+        setSpeechNotice(errMsgText);
+        if (getStrictArabicWebSpeechVoice()) {
+          startStreamingSingleText(errMsgText);
+        }
+      } else {
+        startStreamingSingleText(replyText);
+      }
     } finally {
-      setIsLoadingAi(false);
+      if (aiRequestIdRef.current === requestId) {
+        setIsLoadingAi(false);
+      }
     }
   };
+
+  processInputRef.current = handleProcessUserInput;
 
   // Toggle microphone
   const handleToggleListening = () => {

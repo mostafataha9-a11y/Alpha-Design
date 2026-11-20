@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import {
   countActualWords,
   sanitizeArticleSlug,
@@ -7,7 +7,7 @@ import {
 } from '../utils/articleValidator';
 import { EXPANDED_DECOR_CATALOG } from '../data/curatedImagesCatalog';
 
-const CLIENT_GEMINI_MODELS = ['gemini-4-hydrogen', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'] as const;
+const CLIENT_GEMINI_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'] as const;
 
 export type GeminiKeyErrorCode = 'MISSING_KEY' | 'INVALID_KEY' | 'QUOTA_EXCEEDED' | 'API_ERROR';
 
@@ -119,14 +119,39 @@ function createValidatedClient(): GoogleGenAI {
   return new GoogleGenAI({ apiKey });
 }
 
-function isModelNotFoundError(errMsg: string): boolean {
-  const lower = errMsg.toLowerCase();
+
+export function isTimeoutOrNetworkError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
   return (
-    lower.includes('not_found') ||
-    lower.includes('is not found for api version') ||
-    (lower.includes('model') && lower.includes('404')) ||
-    lower.includes('not supported for generatecontent')
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('انتهت مهلة') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('network error') ||
+    msg.includes('abort')
   );
+}
+
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage = 'انتهت مهلة الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى.'
+): Promise<T> {
+  let timerId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timerId = setTimeout(() => {
+      reject(new GeminiKeyError('API_ERROR', timeoutMessage));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timerId !== undefined) {
+      clearTimeout(timerId);
+    }
+  }
 }
 
 function classifyAndThrowGeminiError(err: unknown): never {
@@ -140,7 +165,7 @@ function classifyAndThrowGeminiError(err: unknown): never {
     lower.includes('invalid api key') ||
     lower.includes('permission_denied') ||
     lower.includes('unauthenticated') ||
-    lower.includes('requested entity was not found') && lower.includes('key') ||
+    (lower.includes('requested entity was not found') && lower.includes('key')) ||
     (lower.includes('400') && lower.includes('api key')) ||
     lower.includes('401') ||
     lower.includes('403')
@@ -152,13 +177,39 @@ function classifyAndThrowGeminiError(err: unknown): never {
     throw new GeminiKeyError('QUOTA_EXCEEDED', ARABIC_QUOTA_KEY_MESSAGE);
   }
 
+  if (isTimeoutOrNetworkError(err)) {
+    throw new GeminiKeyError(
+      'API_ERROR',
+      'تعذر استلام الرد في الوقت المحدد بسبب بطء الشبكة أو انشغال الخادم. حاول مجدداً الآن.'
+    );
+  }
+
   throw new GeminiKeyError('API_ERROR', raw || 'تعذر الاتصال بنموذج Gemini AI.');
+}
+
+function isFatalAuthOrQuotaError(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('api_key_invalid') ||
+    lower.includes('api key not valid') ||
+    lower.includes('invalid api key') ||
+    lower.includes('permission_denied') ||
+    lower.includes('unauthenticated') ||
+    (lower.includes('400') && lower.includes('api key')) ||
+    lower.includes('401') ||
+    lower.includes('403') ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('429') ||
+    lower.includes('quota')
+  );
 }
 
 async function generateWithClientGemini(params: {
   prompt: string;
   systemInstruction?: string;
   responseJson?: boolean;
+  lowLatency?: boolean;
+  timeoutMs?: number;
   parts?: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>;
 }): Promise<{ text: string; modelUsed: string }> {
   const ai = createValidatedClient();
@@ -167,6 +218,8 @@ async function generateWithClientGemini(params: {
   const contents = params.parts && params.parts.length > 0
     ? { parts: params.parts }
     : params.prompt;
+
+  const perModelTimeoutMs = params.timeoutMs ?? (params.lowLatency ? 12000 : 35000);
 
   for (let i = 0; i < CLIENT_GEMINI_MODELS.length; i++) {
     const model = CLIENT_GEMINI_MODELS[i];
@@ -177,38 +230,37 @@ async function generateWithClientGemini(params: {
     if (params.responseJson) {
       config.responseMimeType = 'application/json';
     }
+    if (params.lowLatency && model === 'gemini-4-hydrogen') {
+      config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+    }
 
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents,
-        ...(Object.keys(config).length > 0 ? { config } : {}),
-      });
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents,
+          ...(Object.keys(config).length > 0 ? { config } : {}),
+        }),
+        perModelTimeoutMs,
+        'انتهت مهلة انتظار رد الذكاء الاصطناعي. جارٍ تجربة بديل أسرع...'
+      );
       const text = (response.text || '').trim();
       if (!text) {
         throw new Error('استجابة فارغة من نموذج Gemini.');
+      }
+      if (params.responseJson) {
+        extractAndParseJson(text);
       }
       return { text, modelUsed: model };
     } catch (err: unknown) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err || '');
 
-      // Key/auth errors must fail immediately with clear Arabic key error
-      const lower = msg.toLowerCase();
-      if (
-        lower.includes('api_key_invalid') ||
-        lower.includes('api key not valid') ||
-        lower.includes('invalid api key') ||
-        lower.includes('permission_denied') ||
-        lower.includes('unauthenticated') ||
-        (lower.includes('400') && lower.includes('api key')) ||
-        lower.includes('401') ||
-        lower.includes('403')
-      ) {
+      if (isFatalAuthOrQuotaError(msg)) {
         classifyAndThrowGeminiError(err);
       }
 
-      if (i < CLIENT_GEMINI_MODELS.length - 1 && isModelNotFoundError(msg)) {
+      if (i < CLIENT_GEMINI_MODELS.length - 1) {
         continue;
       }
 
@@ -657,6 +709,8 @@ ${currentArticle ? `المقال المفتوح حالياً: "${currentArticle.
   const { text, modelUsed } = await generateWithClientGemini({
     systemInstruction,
     prompt: `سجل المحادثة حتى الآن:\n${historyText}\n\nرد المساعد الذكي الآن:`,
+    lowLatency: true,
+    timeoutMs: 12000,
   });
 
   return { reply: text, modelUsed };
@@ -852,6 +906,8 @@ export async function describeArticleVisualsWithGeminiClient(input: {
   const { text } = await generateWithClientGemini({
     prompt,
     responseJson: true,
+    lowLatency: true,
+    timeoutMs: 10000,
   });
 
   return extractAndParseJson(text);
@@ -865,17 +921,17 @@ export async function blindReaderDialogueWithGeminiClient(input: {
   ownerName?: string;
 }) {
   const { userSpeech, currentArticle, articles, history, ownerName = 'الحضرى محمود' } = input;
-  const articlesSummary = (articles || []).slice(0, 12).map((a: any) => ({
+  const articlesSummary = (articles || []).slice(0, 10).map((a: any) => ({
     id: a.id,
     title: a.title,
     category: a.category,
-    excerpt: a.excerpt,
+    excerpt: (a.excerpt || '').slice(0, 120),
   }));
 
   const prompt = `أنت المضيف الصوتي الذكي لمدونة «ألفا للديكور والدهانات» باسم المهندس «${ownerName}».
 المقال الحالي: ${currentArticle ? JSON.stringify({ id: currentArticle.id, title: currentArticle.title }) : 'لا يوجد'}
 المقالات المتاحة: ${JSON.stringify(articlesSummary)}
-المحادثة السابقة: ${JSON.stringify(history.slice(-4))}
+المحادثة السابقة: ${JSON.stringify(history.slice(-4).map((m) => ({ role: m.role, text: (m.text || '').slice(0, 160) })))}
 طلب الزائر الآن: "${userSpeech}"
 
 أجب حصراً بصيغة JSON:
@@ -892,6 +948,8 @@ export async function blindReaderDialogueWithGeminiClient(input: {
   const { text } = await generateWithClientGemini({
     prompt,
     responseJson: true,
+    lowLatency: true,
+    timeoutMs: 10000,
   });
 
   return extractAndParseJson(text);
@@ -967,20 +1025,25 @@ export async function synthesizeArabicSpeechWithGeminiClient(input: {
   const voiceName = input.voiceName || 'Kore';
   let lastError: unknown = null;
 
-  for (const model of CLIENT_TTS_MODELS) {
+  for (let i = 0; i < CLIENT_TTS_MODELS.length; i++) {
+    const model = CLIENT_TTS_MODELS[i];
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: `اقرأ النص العربي التالي باللغة العربية الفصحى بنبرة دافئة وواضحة وبإلقاء إذاعي متزن دون إضافة أي تعليق أو مقدمات من عندك:\n\n${cleanText}`,
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName },
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: `اقرأ النص العربي التالي باللغة العربية الفصحى بنبرة دافئة وواضحة وبإلقاء إذاعي متزن دون إضافة أي تعليق أو مقدمات من عندك:\n\n${cleanText}`,
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName },
+              },
             },
           },
-        },
-      });
+        }),
+        14000,
+        'انتهت مهلة تجهيز الصوت العربي.'
+      );
 
       const parts = response.candidates?.[0]?.content?.parts || [];
       const audioPart = parts.find((p: any) => p?.inlineData?.data);
@@ -1011,7 +1074,10 @@ export async function synthesizeArabicSpeechWithGeminiClient(input: {
     } catch (err) {
       lastError = err;
       const msg = err instanceof Error ? err.message : String(err || '');
-      if (isModelNotFoundError(msg)) {
+      if (isFatalAuthOrQuotaError(msg)) {
+        classifyAndThrowGeminiError(err);
+      }
+      if (i < CLIENT_TTS_MODELS.length - 1) {
         continue;
       }
       classifyAndThrowGeminiError(err);

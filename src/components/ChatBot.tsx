@@ -25,6 +25,7 @@ import {
   chatWithGeminiClient,
   isGeminiKeyError,
   formatGeminiArabicError,
+  withTimeout,
 } from '../services/geminiClient';
 
 interface ChatBotProps {
@@ -98,6 +99,13 @@ export const ChatBot: React.FC<ChatBotProps> = ({
   const [autoRedirectCancelled, setAutoRedirectCancelled] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const requestIdRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveMode(initialMode);
+    }
+  }, [initialMode, isOpen]);
 
   // Suggested quick prompts based on active mode
   const suggestedPrompts = activeMode === 'negotiate'
@@ -136,7 +144,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({
     if (isOpen) {
       scrollToBottom();
     }
-  }, [messages, isOpen, activeAgreedDeal]);
+  }, [messages, isOpen, activeAgreedDeal, isLoading]);
 
   // Handle countdown for automatic WhatsApp transfer upon deal agreement
   useEffect(() => {
@@ -226,39 +234,48 @@ Looking forward to starting immediately!`;
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
     setInput('');
+    const requestId = ++requestIdRef.current;
     setIsLoading(true);
 
     try {
-      const data = await chatWithGeminiClient({
-        messages: updatedMessages.map((m) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          content: m.content,
-        })),
-        siteInfo: {
-          blogName: settings.blogName,
-          tagline: settings.tagline,
-          authorName,
-          recentArticles: articles.slice(0, 5).map((a) => ({
-            id: a.id,
-            title: a.title,
-            category: a.category,
-            excerpt: a.excerpt,
+      const data = await withTimeout(
+        chatWithGeminiClient({
+          messages: updatedMessages.map((m) => ({
+            role: m.role === 'assistant' ? 'model' : 'user',
+            content: m.content,
           })),
-        },
-        negotiationConfig: {
-          ownerPhone,
-          ownerWhatsApp,
-          currency: negotiationConfig.currency || '$',
-          services: negotiationConfig.services || [],
-        },
-        currentArticle: currentArticle
-          ? {
-              title: currentArticle.title,
-              category: currentArticle.category,
-              excerpt: currentArticle.excerpt,
-            }
-          : null,
-      });
+          siteInfo: {
+            blogName: settings.blogName,
+            tagline: settings.tagline,
+            authorName,
+            recentArticles: articles.slice(0, 5).map((a) => ({
+              id: a.id,
+              title: a.title,
+              category: a.category,
+              excerpt: a.excerpt,
+            })),
+          },
+          negotiationConfig: {
+            ownerPhone,
+            ownerWhatsApp,
+            currency: negotiationConfig.currency || '$',
+            services: negotiationConfig.services || [],
+          },
+          currentArticle: currentArticle
+            ? {
+                title: currentArticle.title,
+                category: currentArticle.category,
+                excerpt: currentArticle.excerpt,
+              }
+            : null,
+        }),
+        16000,
+        isAr
+          ? 'انتهت مهلة انتظار رد بوت ألفا. يرجى إعادة المحاولة أو التواصل المباشر مع صاحب المدونة.'
+          : 'Alpha Bot request timed out. Please try again or contact the owner directly.'
+      );
+
+      if (requestIdRef.current !== requestId) return;
 
       const rawReply = data.reply || (isAr ? 'عفواً، لم أتمكن من الحصول على إجابة حالياً.' : 'Could not generate reply.');
 
@@ -278,19 +295,22 @@ Looking forward to starting immediately!`;
         setCountdown(6); // 6 seconds automatic handover
       }
     } catch (err) {
+      if (requestIdRef.current !== requestId) return;
       console.error('Chat error:', err);
       const replyContent = isGeminiKeyError(err)
         ? `⚠️ ${formatGeminiArabicError(err)}`
         : isAr
-          ? `يسعدنا تواصلك مع مدونة واستوديو ألفا ديزاين لإدارة وتصميم المشاريع بإشراف «${authorName}». يمكنك التواصل المباشر هاتفياً على ${ownerPhone} أو عبر الواتساب على ${ownerWhatsApp} لمناقشة كافة التفاصيل وحجز مشروعك فوراً.`
-          : `Thank you for contacting Alpha Design Studio led by ${authorName}. You can call directly at ${ownerPhone} or reach out via WhatsApp at ${ownerWhatsApp} to kick off your project!`;
+          ? `⚠️ تعذر استلام رد الذكاء الاصطناعي حالياً (${formatGeminiArabicError(err)}).\n\nيمكنك إعادة المحاولة الآن أو التواصل المباشر مع المهندس «${authorName}» هاتفياً على ${ownerPhone} أو عبر الواتساب على ${ownerWhatsApp} لتنفيذ طلبك فوراً.`
+          : `⚠️ Could not reach the AI assistant right now (${formatGeminiArabicError(err)}). You can try again or contact ${authorName} directly at ${ownerPhone} / WhatsApp ${ownerWhatsApp}.`;
 
       setMessages((prev) => [
         ...prev,
         { role: 'assistant', content: replyContent },
       ]);
     } finally {
-      setIsLoading(false);
+      if (requestIdRef.current === requestId) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -304,6 +324,8 @@ Looking forward to starting immediately!`;
   };
 
   const handleResetChat = () => {
+    requestIdRef.current += 1;
+    setIsLoading(false);
     setActiveAgreedDeal(null);
     setCountdown(null);
     setAutoRedirectCancelled(false);

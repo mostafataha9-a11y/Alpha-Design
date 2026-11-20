@@ -56,4 +56,94 @@ chunks.forEach((c) => {
 const split = splitSpeechTextIntoChunks(article.content, 25);
 assert.ok(split.length >= 2, 'splitSpeechTextIntoChunks should break long article content');
 
+import fs from 'node:fs';
+import {
+  withTimeout,
+  GeminiKeyError,
+  isGeminiKeyError,
+  formatGeminiArabicError,
+  isTimeoutOrNetworkError,
+  blindReaderDialogueWithGeminiClient,
+  chatWithGeminiClient,
+} from './src/services/geminiClient';
+
 console.log(`✅ Verified Arabic Speech Engine (${chunks.length} article chunks, strict Arabic voice check passed).`);
+
+async function runChatbotChecks() {
+  console.log('🤖 Testing Chatbot & Reader Anti-Hang Safeguards...');
+
+  // 4. withTimeout must reject stalled promises instead of hanging forever
+  const neverResolves = new Promise<string>(() => {});
+  let timedOut = false;
+  try {
+    await withTimeout(neverResolves, 40, 'انتهت مهلة الاختبار');
+  } catch (err) {
+    timedOut = true;
+    assert.ok(isTimeoutOrNetworkError(err), 'Timeout error must be recognized as timeout/network error');
+    assert.ok(
+      formatGeminiArabicError(err).includes('انتهت مهلة'),
+      'Arabic timeout error must be readable'
+    );
+  }
+  assert.ok(timedOut, 'withTimeout must reject stalled promises');
+
+  // 5. Missing key throws clear GeminiKeyError synchronously/fast without hanging in both bots
+  let readerMissingKey = false;
+  try {
+    await blindReaderDialogueWithGeminiClient({
+      userSpeech: 'كيف أختار ألوان غرفة المعيشة؟',
+      currentArticle: article,
+      articles: INITIAL_ARTICLES,
+      history: [],
+      ownerName: 'الحضرى محمود',
+    });
+  } catch (err) {
+    readerMissingKey = isGeminiKeyError(err);
+    assert.ok(err instanceof GeminiKeyError && err.code === 'MISSING_KEY');
+    assert.ok(formatGeminiArabicError(err).includes('VITE_GEMINI_API_KEY'));
+  }
+  assert.ok(readerMissingKey, 'Reader dialogue must fail fast with Arabic missing-key message when key is absent');
+
+  let chatMissingKey = false;
+  try {
+    await chatWithGeminiClient({
+      messages: [{ role: 'user', content: 'أريد سعر دهان شقة' }],
+      siteInfo: {
+        blogName: 'ألفا للديكور والدهانات',
+        authorName: 'الحضرى محمود',
+        recentArticles: [],
+      },
+      negotiationConfig: {
+        ownerPhone: '+201098765432',
+        ownerWhatsApp: '201098765432',
+        currency: '$',
+        services: [],
+      },
+      currentArticle: null,
+    });
+  } catch (err) {
+    chatMissingKey = isGeminiKeyError(err);
+    assert.ok(err instanceof GeminiKeyError && err.code === 'MISSING_KEY');
+  }
+  assert.ok(chatMissingKey, 'ChatBot must fail fast with Arabic missing-key message when key is absent');
+
+  // 6. Verify source safeguards in BlindScreenReader, ChatBot, and App
+  const readerSrc = fs.readFileSync('src/components/BlindScreenReader.tsx', 'utf8');
+  assert.ok(readerSrc.includes('aiRequestIdRef'), 'BlindScreenReader must guard concurrent/stale AI requests');
+  assert.ok(readerSrc.includes('processInputRef'), 'BlindScreenReader must use processInputRef for voice recognition');
+  assert.ok(readerSrc.includes('withTimeout('), 'BlindScreenReader must wrap AI requests with outer timeout');
+  assert.ok(!readerSrc.includes('startStreamingSingleText(immediateAck)'), 'BlindScreenReader must not fire colliding filler TTS before AI reply');
+
+  const chatBotSrc = fs.readFileSync('src/components/ChatBot.tsx', 'utf8');
+  assert.ok(chatBotSrc.includes('requestIdRef'), 'ChatBot must track requestIdRef for cancellation/loading cleanup');
+  assert.ok(chatBotSrc.includes('setActiveMode(initialMode)'), 'ChatBot must sync activeMode with initialMode prop');
+  assert.ok(chatBotSrc.includes('withTimeout('), 'ChatBot must wrap chat requests with outer timeout');
+
+  const appSrc = fs.readFileSync('src/App.tsx', 'utf8');
+  assert.ok(appSrc.includes('initialMode={chatBotMode}'), 'App must pass chatBotMode to ChatBot');
+
+  console.log('✅ Verified Chatbot & Reader Anti-Hang Safeguards (all checks passed).');
+}
+
+await runChatbotChecks();
+
